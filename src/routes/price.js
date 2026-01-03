@@ -1,6 +1,8 @@
 const express = require('express');
 const { updateAllPrices } = require('../services/price/price');
 const { logger } = require('../services/logger');
+const { handleAsyncErrors } = require('../utils/error-utils');
+const { InternalServerError } = require('../utils/errors');
 
 const router = express.Router();
 
@@ -9,27 +11,28 @@ const router = express.Router();
  * Trigger bulk price update for all published products
  * Returns summary of update operation
  */
-router.post('/update-all', async (req, res) => {
-  try {
+router.post(
+  '/update-all',
+  handleAsyncErrors(async (req, res) => {
     logger.info('Bulk price update requested');
-    
-    const summary = await updateAllPrices();
 
-    return res.json({
-      success: true,
-      ...summary,
-    });
-  } catch (error) {
-    logger.error('Bulk price update error', {
-      error: error.message,
-    });
-    return res.status(500).json({
-      success: false,
-      error: 'Internal Server Error',
-      message: 'Failed to update prices',
-    });
-  }
-});
+    try {
+      const summary = await updateAllPrices();
+
+      return res.json({
+        success: true,
+        ...summary,
+      });
+    } catch (error) {
+      // If it's already an AppError, re-throw it
+      if (error.isOperational) {
+        throw error;
+      }
+      // Otherwise, wrap in InternalServerError
+      throw new InternalServerError('Failed to update prices');
+    }
+  })
+);
 
 module.exports = router;
 

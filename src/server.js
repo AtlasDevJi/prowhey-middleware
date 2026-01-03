@@ -109,33 +109,44 @@ app.use('/api/stock', managementRateLimiter, stockRoutes);
 const webhookRoutes = require('./routes/webhooks');
 app.use('/api/webhooks', webhookRateLimiter, webhookRoutes);
 
-// 404 handler
-app.use((req, res) => {
-  res.status(404).json({
-    success: false,
-    error: 'Not Found',
-    message: `Route ${req.method} ${req.path} not found`,
-  });
+// 404 handler - throw NotFoundError
+const { NotFoundError } = require('./utils/errors');
+app.use((req, res, next) => {
+  throw new NotFoundError(`Route ${req.method} ${req.path} not found`);
 });
 
-// Error handler
-app.use((err, req, res, next) => {
-  console.error('Error:', err);
-  res.status(err.status || 500).json({
-    success: false,
-    error: 'Internal Server Error',
-    message:
-      process.env.NODE_ENV === 'production'
-        ? 'An error occurred'
-        : err.message,
-  });
-});
+// Error handler middleware (must be last)
+const { errorHandler } = require('./middleware/error-handler');
+app.use(errorHandler);
 
 // Start server
 const server = app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
   console.log(`Environment: ${process.env.NODE_ENV}`);
   console.log(`Health check: http://localhost:${PORT}/health`);
+});
+
+// Unhandled error handlers
+const { logger } = require('./services/logger');
+
+process.on('unhandledRejection', (reason, promise) => {
+  logger.error('Unhandled Promise Rejection', {
+    reason: reason?.message || reason,
+    stack: reason?.stack,
+    promise: promise.toString(),
+  });
+  // Don't exit - let error handler middleware catch it if possible
+});
+
+process.on('uncaughtException', (error) => {
+  logger.error('Uncaught Exception', {
+    error: error.message,
+    stack: error.stack,
+  });
+  // Graceful shutdown
+  server.close(() => {
+    process.exit(1);
+  });
 });
 
 // Graceful shutdown

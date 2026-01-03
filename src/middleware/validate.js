@@ -1,6 +1,7 @@
 const { z } = require('zod');
 const { logger } = require('../services/logger');
 const { sanitizeObject, sanitizePathParam } = require('../utils/sanitize');
+const { ValidationError } = require('../utils/errors');
 
 /**
  * Format Zod validation errors into user-friendly format
@@ -53,11 +54,9 @@ function validateRequest(schema) {
           errors,
         });
 
-        return res.status(400).json({
-          success: false,
-          error: 'Validation Error',
-          message: 'Request validation failed',
-          errors,
+        // Throw ValidationError - let error handler middleware format response
+        throw new ValidationError('Request validation failed', {
+          fields: errors,
         });
       }
 
@@ -77,17 +76,14 @@ function validateRequest(schema) {
 
       next();
     } catch (error) {
-      logger.error('Validation middleware error', {
-        path: req.path,
-        method: req.method,
-        error: error.message,
-      });
+      // If it's already an AppError, re-throw it
+      if (error.isOperational) {
+        throw error;
+      }
 
-      return res.status(500).json({
-        success: false,
-        error: 'Internal Server Error',
-        message: 'Validation processing failed',
-      });
+      // Otherwise, wrap in InternalServerError
+      const { InternalServerError } = require('../utils/errors');
+      throw new InternalServerError('Validation processing failed');
     }
   };
 }

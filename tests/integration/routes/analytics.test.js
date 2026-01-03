@@ -48,13 +48,16 @@ describe('Analytics Routes Integration Tests', () => {
       expect(response.body).toEqual({
         success: false,
         error: 'Validation Error',
+        code: 'VALIDATION_ERROR',
         message: 'Request validation failed',
-        errors: expect.arrayContaining([
-          expect.objectContaining({
-            field: 'params.name',
-            message: expect.stringContaining('ERPNext name'),
-          }),
-        ]),
+        details: expect.objectContaining({
+          fields: expect.arrayContaining([
+            expect.objectContaining({
+              field: 'params.name',
+              message: expect.stringContaining('ERPNext name'),
+            }),
+          ]),
+        }),
       });
     });
 
@@ -94,12 +97,15 @@ describe('Analytics Routes Integration Tests', () => {
       expect(response.body).toEqual({
         success: false,
         error: 'Validation Error',
+        code: 'VALIDATION_ERROR',
         message: 'Request validation failed',
-        errors: expect.arrayContaining([
-          expect.objectContaining({
-            field: 'body.starRating',
-          }),
-        ]),
+        details: expect.objectContaining({
+          fields: expect.arrayContaining([
+            expect.objectContaining({
+              field: 'body.starRating',
+            }),
+          ]),
+        }),
       });
     });
 
@@ -109,7 +115,8 @@ describe('Analytics Routes Integration Tests', () => {
         .send({ starRating: 0 })
         .expect(400);
 
-      expect(response.body.errors).toBeDefined();
+      expect(response.body.details).toBeDefined();
+      expect(response.body.details.fields).toBeDefined();
     });
 
     test('should reject missing starRating', async () => {
@@ -118,7 +125,8 @@ describe('Analytics Routes Integration Tests', () => {
         .send({})
         .expect(400);
 
-      expect(response.body.errors).toBeDefined();
+      expect(response.body.details).toBeDefined();
+      expect(response.body.details.fields).toBeDefined();
     });
 
     test('should sanitize XSS in product name', async () => {
@@ -175,7 +183,8 @@ describe('Analytics Routes Integration Tests', () => {
         })
         .expect(400);
 
-      expect(response.body.errors).toBeDefined();
+      expect(response.body.details).toBeDefined();
+      expect(response.body.details.fields).toBeDefined();
     });
 
     test('should reject text exceeding max length', async () => {
@@ -188,7 +197,8 @@ describe('Analytics Routes Integration Tests', () => {
         })
         .expect(400);
 
-      expect(response.body.errors).toBeDefined();
+      expect(response.body.details).toBeDefined();
+      expect(response.body.details.fields).toBeDefined();
     });
 
     test('should sanitize XSS in comment text', async () => {

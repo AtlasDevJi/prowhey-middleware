@@ -1,6 +1,8 @@
 const express = require('express');
 const { updateAllStock } = require('../services/stock/stock');
 const { logger } = require('../services/logger');
+const { handleAsyncErrors } = require('../utils/error-utils');
+const { InternalServerError } = require('../utils/errors');
 
 const router = express.Router();
 
@@ -10,27 +12,28 @@ const router = express.Router();
  * Processes ALL flavors (not just first) since each flavor has its own stock
  * Returns summary of update operation
  */
-router.post('/update-all', async (req, res) => {
-  try {
+router.post(
+  '/update-all',
+  handleAsyncErrors(async (req, res) => {
     logger.info('Bulk stock update requested');
 
-    const summary = await updateAllStock();
+    try {
+      const summary = await updateAllStock();
 
-    return res.json({
-      success: true,
-      ...summary,
-    });
-  } catch (error) {
-    logger.error('Bulk stock update error', {
-      error: error.message,
-    });
-    return res.status(500).json({
-      success: false,
-      error: 'Internal Server Error',
-      message: 'Failed to update stock availability',
-    });
-  }
-});
+      return res.json({
+        success: true,
+        ...summary,
+      });
+    } catch (error) {
+      // If it's already an AppError, re-throw it
+      if (error.isOperational) {
+        throw error;
+      }
+      // Otherwise, wrap in InternalServerError
+      throw new InternalServerError('Failed to update stock availability');
+    }
+  })
+);
 
 module.exports = router;
 

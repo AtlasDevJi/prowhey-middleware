@@ -49,6 +49,14 @@ const logger = {
   error: (message, data) => {
     writeLog('error', message, data, true);
   },
+  /**
+   * Log error with request context
+   * @param {string} message - Error message
+   * @param {object} errorData - Error data (error object, context, etc.)
+   */
+  errorWithContext: (message, errorData) => {
+    writeLog('error', message, errorData, true);
+  },
 };
 
 module.exports = { logger };

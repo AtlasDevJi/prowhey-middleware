@@ -5,13 +5,14 @@ const {
   addProductRating,
   addProductComment,
 } = require('../services/analytics/analytics');
-const { logger } = require('../services/logger');
 const { validateRequest } = require('../middleware/validate');
 const {
   analyticsViewRequestSchema,
   analyticsRatingRequestSchema,
   analyticsCommentRequestSchema,
 } = require('../config/validation');
+const { handleAsyncErrors } = require('../utils/error-utils');
+const { InternalServerError } = require('../utils/errors');
 
 /**
  * POST /api/analytics/product/:name/view
@@ -22,10 +23,10 @@ const {
 router.post(
   '/product/:name/view',
   validateRequest(analyticsViewRequestSchema),
-  async (req, res) => {
-    try {
-      const name = req.validatedParams.name;
+  handleAsyncErrors(async (req, res) => {
+    const name = req.validatedParams.name;
 
+    try {
       const views = await incrementProductViews(name);
 
       return res.json({
@@ -33,17 +34,14 @@ router.post(
         views,
       });
     } catch (error) {
-      logger.error('View increment error', {
-        error: error.message,
-        params: req.validatedParams,
-      });
-      return res.status(500).json({
-        success: false,
-        error: 'Internal Server Error',
-        message: 'Failed to increment views',
-      });
+      // If it's already an AppError, re-throw it
+      if (error.isOperational) {
+        throw error;
+      }
+      // Otherwise, wrap in InternalServerError
+      throw new InternalServerError('Failed to increment views');
     }
-  }
+  })
 );
 
 /**
@@ -56,11 +54,11 @@ router.post(
 router.post(
   '/product/:name/rating',
   validateRequest(analyticsRatingRequestSchema),
-  async (req, res) => {
-    try {
-      const name = req.validatedParams.name;
-      const { starRating } = req.validatedBody;
+  handleAsyncErrors(async (req, res) => {
+    const name = req.validatedParams.name;
+    const { starRating } = req.validatedBody;
 
+    try {
       const result = await addProductRating(name, starRating);
 
       return res.json({
@@ -69,18 +67,14 @@ router.post(
         reviewCount: result.reviewCount,
       });
     } catch (error) {
-      logger.error('Rating add error', {
-        error: error.message,
-        params: req.validatedParams,
-        body: req.validatedBody,
-      });
-      return res.status(500).json({
-        success: false,
-        error: 'Internal Server Error',
-        message: 'Failed to add rating',
-      });
+      // If it's already an AppError, re-throw it
+      if (error.isOperational) {
+        throw error;
+      }
+      // Otherwise, wrap in InternalServerError
+      throw new InternalServerError('Failed to add rating');
     }
-  }
+  })
 );
 
 /**
@@ -93,18 +87,18 @@ router.post(
 router.post(
   '/product/:name/comment',
   validateRequest(analyticsCommentRequestSchema),
-  async (req, res) => {
+  handleAsyncErrors(async (req, res) => {
+    const name = req.validatedParams.name;
+    const { text, author, timestamp, ...otherFields } = req.validatedBody;
+
+    const comment = {
+      text,
+      author: author || 'anonymous',
+      timestamp: timestamp || new Date().toISOString(),
+      ...otherFields,
+    };
+
     try {
-      const name = req.validatedParams.name;
-      const { text, author, timestamp, ...otherFields } = req.validatedBody;
-
-      const comment = {
-        text,
-        author: author || 'anonymous',
-        timestamp: timestamp || new Date().toISOString(),
-        ...otherFields,
-      };
-
       const comments = await addProductComment(name, comment);
 
       return res.json({
@@ -112,18 +106,14 @@ router.post(
         comments,
       });
     } catch (error) {
-      logger.error('Comment add error', {
-        error: error.message,
-        params: req.validatedParams,
-        body: req.validatedBody,
-      });
-      return res.status(500).json({
-        success: false,
-        error: 'Internal Server Error',
-        message: 'Failed to add comment',
-      });
+      // If it's already an AppError, re-throw it
+      if (error.isOperational) {
+        throw error;
+      }
+      // Otherwise, wrap in InternalServerError
+      throw new InternalServerError('Failed to add comment');
     }
-  }
+  })
 );
 
 module.exports = router;

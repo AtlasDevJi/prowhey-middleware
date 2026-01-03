@@ -85,12 +85,15 @@ describe('Webhook Routes Integration Tests', () => {
       expect(response.body).toEqual({
         success: false,
         error: 'Validation Error',
+        code: 'VALIDATION_ERROR',
         message: 'Request validation failed',
-        errors: expect.arrayContaining([
-          expect.objectContaining({
-            field: 'body.erpnextName',
-          }),
-        ]),
+        details: expect.objectContaining({
+          fields: expect.arrayContaining([
+            expect.objectContaining({
+              field: 'body.erpnextName',
+            }),
+          ]),
+        }),
       });
     });
 
@@ -103,7 +106,8 @@ describe('Webhook Routes Integration Tests', () => {
         })
         .expect(400);
 
-      expect(response.body.errors).toBeDefined();
+      expect(response.body.details).toBeDefined();
+      expect(response.body.details.fields).toBeDefined();
     });
 
     test('should reject missing price', async () => {
@@ -115,7 +119,8 @@ describe('Webhook Routes Integration Tests', () => {
         })
         .expect(400);
 
-      expect(response.body.errors).toBeDefined();
+      expect(response.body.details).toBeDefined();
+      expect(response.body.details.fields).toBeDefined();
     });
 
     test('should reject invalid price (negative)', async () => {
@@ -128,7 +133,8 @@ describe('Webhook Routes Integration Tests', () => {
         })
         .expect(400);
 
-      expect(response.body.errors).toBeDefined();
+      expect(response.body.details).toBeDefined();
+      expect(response.body.details.fields).toBeDefined();
     });
 
     test('should reject invalid price (too high)', async () => {
@@ -141,7 +147,8 @@ describe('Webhook Routes Integration Tests', () => {
         })
         .expect(400);
 
-      expect(response.body.errors).toBeDefined();
+      expect(response.body.details).toBeDefined();
+      expect(response.body.details.fields).toBeDefined();
     });
 
     test('should reject invalid erpnextName format', async () => {
@@ -154,7 +161,8 @@ describe('Webhook Routes Integration Tests', () => {
         })
         .expect(400);
 
-      expect(response.body.errors).toBeDefined();
+      expect(response.body.details).toBeDefined();
+      expect(response.body.details.fields).toBeDefined();
     });
 
     test('should reject sizeUnit exceeding max length', async () => {
@@ -169,7 +177,8 @@ describe('Webhook Routes Integration Tests', () => {
         })
         .expect(400);
 
-      expect(response.body.errors).toBeDefined();
+      expect(response.body.details).toBeDefined();
+      expect(response.body.details.fields).toBeDefined();
     });
 
     test('should accept optional itemCode', async () => {
@@ -203,6 +212,7 @@ describe('Webhook Routes Integration Tests', () => {
       expect(response.body).toEqual({
         success: false,
         error: 'Internal Server Error',
+        code: 'INTERNAL_SERVER_ERROR',
         message: 'Failed to update price',
       });
     });

@@ -4,6 +4,8 @@ const { deleteCache } = require('../services/redis/cache');
 const { logger } = require('../services/logger');
 const { validateRequest } = require('../middleware/validate');
 const { webhookPriceUpdateRequestSchema } = require('../config/validation');
+const { handleAsyncErrors } = require('../utils/error-utils');
+const { InternalServerError } = require('../utils/errors');
 
 const router = express.Router();
 
@@ -29,20 +31,16 @@ const router = express.Router();
 router.post(
   '/price-update',
   validateRequest(webhookPriceUpdateRequestSchema),
-  async (req, res) => {
-    try {
-      const { erpnextName, sizeUnit, price, itemCode, invalidateCache } =
-        req.validatedBody;
+  handleAsyncErrors(async (req, res) => {
+    const { erpnextName, sizeUnit, price, itemCode, invalidateCache } =
+      req.validatedBody;
 
+    try {
       // Update price in Redis
       const success = await setCachedPrice(erpnextName, sizeUnit, price);
 
       if (!success) {
-        return res.status(500).json({
-          success: false,
-          error: 'Internal Server Error',
-          message: 'Failed to update price',
-        });
+        throw new InternalServerError('Failed to update price');
       }
 
       logger.info('Price updated via webhook', {
@@ -69,17 +67,14 @@ router.post(
         price,
       });
     } catch (error) {
-      logger.error('Webhook price update error', {
-        error: error.message,
-        body: req.validatedBody,
-      });
-      return res.status(500).json({
-        success: false,
-        error: 'Internal Server Error',
-        message: 'Failed to process price update',
-      });
+      // If it's already an AppError, re-throw it
+      if (error.isOperational) {
+        throw error;
+      }
+      // Otherwise, wrap in InternalServerError
+      throw new InternalServerError('Failed to process price update');
     }
-  }
+  })
 );
 
 module.exports = router;

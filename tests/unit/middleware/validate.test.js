@@ -1,4 +1,5 @@
 const { validateRequest } = require('../../../src/middleware/validate');
+const { ValidationError, InternalServerError } = require('../../../src/utils/errors');
 const { z } = require('zod');
 
 describe('Validation Middleware', () => {
@@ -54,22 +55,10 @@ describe('Validation Middleware', () => {
       req.body = { name: '' };
 
       const middleware = validateRequest(schema);
-      await middleware(req, res, next);
-
+      
+      await expect(middleware(req, res, next)).rejects.toThrow(ValidationError);
       expect(next).not.toHaveBeenCalled();
-      expect(res.status).toHaveBeenCalledWith(400);
-      expect(res.json).toHaveBeenCalledWith(
-        expect.objectContaining({
-          success: false,
-          error: 'Validation Error',
-          errors: expect.arrayContaining([
-            expect.objectContaining({
-              field: 'body.name',
-              message: expect.any(String),
-            }),
-          ]),
-        })
-      );
+      expect(res.status).not.toHaveBeenCalled();
     });
 
     test('should sanitize path parameters', async () => {
@@ -121,16 +110,9 @@ describe('Validation Middleware', () => {
       req.body = { name: '', age: -1 };
 
       const middleware = validateRequest(schema);
-      await middleware(req, res, next);
-
-      expect(res.status).toHaveBeenCalledWith(400);
-      expect(res.json).toHaveBeenCalledWith(
-        expect.objectContaining({
-          errors: expect.arrayContaining([
-            expect.objectContaining({ field: expect.any(String) }),
-          ]),
-        })
-      );
+      
+      await expect(middleware(req, res, next)).rejects.toThrow(ValidationError);
+      expect(next).not.toHaveBeenCalled();
     });
 
     test('should handle missing params/body/query', async () => {
@@ -155,15 +137,9 @@ describe('Validation Middleware', () => {
       const invalidSchema = null;
 
       const middleware = validateRequest(invalidSchema);
-      await middleware(req, res, next);
-
-      expect(res.status).toHaveBeenCalledWith(500);
-      expect(res.json).toHaveBeenCalledWith(
-        expect.objectContaining({
-          success: false,
-          error: 'Internal Server Error',
-        })
-      );
+      
+      await expect(middleware(req, res, next)).rejects.toThrow(InternalServerError);
+      expect(next).not.toHaveBeenCalled();
     });
   });
 });
