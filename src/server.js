@@ -73,6 +73,10 @@ app.use((req, res, next) => {
   next();
 });
 
+// Cache middleware - apply before other routes
+const { cacheMiddleware } = require('./services/cache/middleware');
+app.use('/api/resource', cacheMiddleware);
+
 // 404 handler
 app.use((req, res) => {
   res.status(404).json({
