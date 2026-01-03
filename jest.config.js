@@ -15,5 +15,8 @@ module.exports = {
       statements: 60,
     },
   },
+  transformIgnorePatterns: [
+    'node_modules/(?!(uuid)/)',
+  ],
 };
 
