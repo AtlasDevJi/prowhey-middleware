@@ -4,6 +4,7 @@
 
 - [Base URL & Authentication](#base-url--authentication)
 - [Response Format](#response-format)
+- [Authentication Endpoints](#authentication-endpoints)
 - [Product Endpoints](#product-endpoints)
 - [Analytics Endpoints](#analytics-endpoints)
 - [Price Management](#price-management)
@@ -22,7 +23,9 @@
 | Production | `https://your-domain.com` |
 | Development | `http://localhost:3001` |
 
-**Authentication:** All API calls use server-side ERPNext credentials. No user authentication is required. The middleware acts as a proxy between your mobile app and ERPNext.
+**Authentication:** 
+- **Public Endpoints**: Product, analytics, and webhook endpoints use server-side ERPNext credentials. No user authentication required.
+- **Protected Endpoints**: User account endpoints require JWT Bearer token authentication. See [Authentication Endpoints](#authentication-endpoints) for details.
 
 ---
 
@@ -46,6 +49,674 @@
   "message": "Human-readable error message"
 }
 ```
+
+---
+
+## Authentication Endpoints
+
+All authentication endpoints are prefixed with `/api/auth`. Most endpoints require a `X-Device-ID` header for rate limiting purposes.
+
+### Authentication Flow
+
+1. **Signup** → User registers with email/phone and password
+2. **Verify** → User verifies account with OTP code (SMS/WhatsApp)
+3. **Login** → User authenticates and receives JWT tokens
+4. **Use Tokens** → Include `Authorization: Bearer <accessToken>` header for protected endpoints
+
+### JWT Tokens
+
+- **Access Token**: Short-lived (15 minutes), used for API requests
+- **Refresh Token**: Long-lived (7 days), used to get new access tokens
+- **Token Format**: Include in `Authorization` header as `Bearer <token>`
+
+---
+
+### POST /api/auth/signup
+
+Register a new user account.
+
+| Header | Type | Required | Description |
+|--------|------|----------|-------------|
+| `X-Device-ID` | string | Yes | Unique device identifier |
+| `Content-Type` | string | Yes | Must be `application/json` |
+
+| Body Parameter | Type | Required | Description |
+|----------------|------|----------|-------------|
+| `username` | string | Yes | Username (3-32 chars, alphanumeric + underscore) |
+| `email` | string | No* | Email address (required if phone not provided) |
+| `password` | string | Yes | Password (minimum 6 characters) |
+| `phone` | string | No* | Phone number in E.164 format (e.g., +1234567890) |
+| `verificationMethod` | string | No | `sms` or `whatsapp` (defaults to `sms` if phone provided) |
+| `deviceId` | string | Yes | Device identifier |
+| `googleId` | string | No | Google OAuth ID (for Google signup) |
+
+\* Either `email` or `phone` must be provided.
+
+**Example Request:**
+
+```http
+POST /api/auth/signup
+Content-Type: application/json
+X-Device-ID: device-123
+
+{
+  "username": "johndoe",
+  "email": "john@example.com",
+  "password": "securepass123",
+  "phone": "+1234567890",
+  "verificationMethod": "sms",
+  "deviceId": "device-123"
+}
+```
+
+**Response (201 Created):**
+
+```json
+{
+  "success": true,
+  "data": {
+    "user": {
+      "id": "usr_abc123",
+      "email": "john@example.com",
+      "username": "johndoe",
+      "isVerified": false
+    },
+    "needsVerification": true
+  }
+}
+```
+
+**Note:** If `needsVerification` is `true`, user must verify account with OTP before login. Google OAuth users are auto-verified.
+
+---
+
+### POST /api/auth/verify
+
+Verify user account with OTP code received via SMS/WhatsApp.
+
+| Header | Type | Required | Description |
+|--------|------|----------|-------------|
+| `X-Device-ID` | string | Yes | Unique device identifier |
+| `Content-Type` | string | Yes | Must be `application/json` |
+
+| Body Parameter | Type | Required | Description |
+|----------------|------|----------|-------------|
+| `userId` | string | Yes | User ID from signup response |
+| `code` | string | Yes | 6-digit OTP code |
+| `method` | string | Yes | `sms` or `whatsapp` |
+
+**Example Request:**
+
+```http
+POST /api/auth/verify
+Content-Type: application/json
+X-Device-ID: device-123
+
+{
+  "userId": "usr_abc123",
+  "code": "123456",
+  "method": "sms"
+}
+```
+
+**Response (200 OK):**
+
+```json
+{
+  "success": true,
+  "data": {
+    "accessToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+    "refreshToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+    "user": {
+      "id": "usr_abc123",
+      "email": "john@example.com",
+      "username": "johndoe",
+      "isVerified": true
+    }
+  }
+}
+```
+
+**Error Responses:**
+
+- `400`: Invalid or expired code
+- `404`: User not found
+
+---
+
+### POST /api/auth/login
+
+Authenticate user and receive JWT tokens.
+
+| Header | Type | Required | Description |
+|--------|------|----------|-------------|
+| `X-Device-ID` | string | Yes | Unique device identifier |
+| `Content-Type` | string | Yes | Must be `application/json` |
+
+| Body Parameter | Type | Required | Description |
+|----------------|------|----------|-------------|
+| `email` | string | No* | Email address |
+| `username` | string | No* | Username |
+| `password` | string | Yes | Password |
+| `phone` | string | No | Phone number (not yet supported) |
+| `googleToken` | string | No | Google OAuth token |
+
+\* Either `email` or `username` must be provided.
+
+**Example Request:**
+
+```http
+POST /api/auth/login
+Content-Type: application/json
+X-Device-ID: device-123
+
+{
+  "email": "john@example.com",
+  "password": "securepass123"
+}
+```
+
+**Response (200 OK):**
+
+```json
+{
+  "success": true,
+  "data": {
+    "accessToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+    "refreshToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+    "user": {
+      "id": "usr_abc123",
+      "email": "john@example.com",
+      "username": "johndoe",
+      "isVerified": true
+    }
+  }
+}
+```
+
+**Error Responses:**
+
+- `401`: Invalid credentials or account not verified
+- `400`: Missing required fields
+
+---
+
+### POST /api/auth/google-login
+
+Authenticate with Google OAuth (app handles OAuth flow).
+
+| Header | Type | Required | Description |
+|--------|------|----------|-------------|
+| `X-Device-ID` | string | Yes | Unique device identifier |
+| `Content-Type` | string | Yes | Must be `application/json` |
+
+| Body Parameter | Type | Required | Description |
+|----------------|------|----------|-------------|
+| `email` | string | Yes | Email from Google account |
+| `name` | string | Yes | User's name from Google |
+| `googleId` | string | Yes | Google user ID |
+| `deviceId` | string | Yes | Device identifier |
+
+**Example Request:**
+
+```http
+POST /api/auth/google-login
+Content-Type: application/json
+X-Device-ID: device-123
+
+{
+  "email": "john@gmail.com",
+  "name": "John Doe",
+  "googleId": "google_123456",
+  "deviceId": "device-123"
+}
+```
+
+**Response (200 OK):**
+
+```json
+{
+  "success": true,
+  "data": {
+    "accessToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+    "refreshToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+    "user": {
+      "id": "usr_abc123",
+      "email": "john@gmail.com",
+      "username": "john",
+      "isVerified": true
+    }
+  }
+}
+```
+
+---
+
+### GET /api/auth/me
+
+Get current authenticated user information.
+
+| Header | Type | Required | Description |
+|--------|------|----------|-------------|
+| `Authorization` | string | Yes | `Bearer <accessToken>` |
+| `X-Device-ID` | string | Yes | Unique device identifier |
+
+**Example Request:**
+
+```http
+GET /api/auth/me
+Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+X-Device-ID: device-123
+```
+
+**Response (200 OK):**
+
+```json
+{
+  "success": true,
+  "data": {
+    "user": {
+      "id": "usr_abc123",
+      "email": "john@example.com",
+      "username": "johndoe",
+      "phone": "+1234567890",
+      "isVerified": true,
+      "createdAt": "2025-01-15T10:00:00.000Z",
+      "lastLogin": "2025-01-15T10:30:00.000Z"
+    }
+  }
+}
+```
+
+**Error Responses:**
+
+- `401`: Invalid or expired token
+
+---
+
+### PUT /api/auth/profile
+
+Update user profile (username, email, phone). Requires password confirmation handled client-side.
+
+| Header | Type | Required | Description |
+|--------|------|----------|-------------|
+| `Authorization` | string | Yes | `Bearer <accessToken>` |
+| `X-Device-ID` | string | Yes | Unique device identifier |
+| `Content-Type` | string | Yes | Must be `application/json` |
+
+| Body Parameter | Type | Required | Description |
+|----------------|------|----------|-------------|
+| `username` | string | No | New username (3-32 chars) |
+| `email` | string | No | New email address |
+| `phone` | string | No | New phone number (E.164 format) |
+| `passwordConfirmed` | boolean | Yes | Must be `true` (app verifies password client-side) |
+
+**Note:** If email is changed, user must verify new email with OTP.
+
+**Example Request:**
+
+```http
+PUT /api/auth/profile
+Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+Content-Type: application/json
+X-Device-ID: device-123
+
+{
+  "username": "newusername",
+  "passwordConfirmed": true
+}
+```
+
+**Response (200 OK) - No Email Change:**
+
+```json
+{
+  "success": true,
+  "data": {
+    "user": {
+      "id": "usr_abc123",
+      "email": "john@example.com",
+      "username": "newusername",
+      "phone": "+1234567890",
+      "isVerified": true
+    }
+  }
+}
+```
+
+**Response (200 OK) - Email Change (Requires Verification):**
+
+```json
+{
+  "success": true,
+  "data": {
+    "needsEmailVerification": true,
+    "message": "Email verification code sent",
+    "code": "123456"
+  }
+}
+```
+
+**Note:** In development mode, verification code is returned in response. In production, code is sent via SMS/WhatsApp.
+
+**Error Responses:**
+
+- `400`: Validation error or password not confirmed
+- `401`: Invalid or expired token
+- `409`: Username or email already taken
+
+---
+
+### POST /api/auth/verify-email
+
+Verify email change with OTP code.
+
+| Header | Type | Required | Description |
+|--------|------|----------|-------------|
+| `Authorization` | string | Yes | `Bearer <accessToken>` |
+| `X-Device-ID` | string | Yes | Unique device identifier |
+| `Content-Type` | string | Yes | Must be `application/json` |
+
+| Body Parameter | Type | Required | Description |
+|----------------|------|----------|-------------|
+| `code` | string | Yes | 6-digit OTP code |
+
+**Example Request:**
+
+```http
+POST /api/auth/verify-email
+Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+Content-Type: application/json
+X-Device-ID: device-123
+
+{
+  "code": "123456"
+}
+```
+
+**Response (200 OK):**
+
+```json
+{
+  "success": true,
+  "data": {
+    "user": {
+      "id": "usr_abc123",
+      "email": "newemail@example.com",
+      "username": "johndoe",
+      "phone": "+1234567890",
+      "isVerified": true
+    }
+  }
+}
+```
+
+**Error Responses:**
+
+- `400`: Invalid or expired code
+- `401`: Invalid or expired token
+
+---
+
+### PUT /api/auth/password
+
+Change user password.
+
+| Header | Type | Required | Description |
+|--------|------|----------|-------------|
+| `Authorization` | string | Yes | `Bearer <accessToken>` |
+| `X-Device-ID` | string | Yes | Unique device identifier |
+| `Content-Type` | string | Yes | Must be `application/json` |
+
+| Body Parameter | Type | Required | Description |
+|----------------|------|----------|-------------|
+| `currentPassword` | string | Yes | Current password |
+| `newPassword` | string | Yes | New password (minimum 6 characters) |
+
+**Example Request:**
+
+```http
+PUT /api/auth/password
+Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+Content-Type: application/json
+X-Device-ID: device-123
+
+{
+  "currentPassword": "oldpassword123",
+  "newPassword": "newpassword456"
+}
+```
+
+**Response (200 OK):**
+
+```json
+{
+  "success": true,
+  "message": "Password changed successfully"
+}
+```
+
+**Error Responses:**
+
+- `400`: Validation error
+- `401`: Invalid current password or expired token
+
+---
+
+### POST /api/auth/forgot-password
+
+Request password reset. Sends reset code via SMS/WhatsApp.
+
+| Header | Type | Required | Description |
+|--------|------|----------|-------------|
+| `X-Device-ID` | string | Yes | Unique device identifier |
+| `Content-Type` | string | Yes | Must be `application/json` |
+
+| Body Parameter | Type | Required | Description |
+|----------------|------|----------|-------------|
+| `email` | string | No* | Email address |
+| `phone` | string | No* | Phone number (E.164 format) |
+| `verificationMethod` | string | No | `sms` or `whatsapp` |
+
+\* Either `email` or `phone` must be provided.
+
+**Example Request:**
+
+```http
+POST /api/auth/forgot-password
+Content-Type: application/json
+X-Device-ID: device-123
+
+{
+  "email": "john@example.com",
+  "phone": "+1234567890",
+  "verificationMethod": "sms"
+}
+```
+
+**Response (200 OK):**
+
+```json
+{
+  "success": true,
+  "message": "If the account exists, a reset code has been sent"
+}
+```
+
+**Note:** Response is generic for security (doesn't reveal if email exists).
+
+---
+
+### POST /api/auth/reset-password
+
+Reset password using reset token.
+
+| Header | Type | Required | Description |
+|--------|------|----------|-------------|
+| `X-Device-ID` | string | Yes | Unique device identifier |
+| `Content-Type` | string | Yes | Must be `application/json` |
+
+| Body Parameter | Type | Required | Description |
+|----------------|------|----------|-------------|
+| `token` | string | Yes | Reset token (from forgot-password) |
+| `newPassword` | string | Yes | New password (minimum 6 characters) |
+
+**Example Request:**
+
+```http
+POST /api/auth/reset-password
+Content-Type: application/json
+X-Device-ID: device-123
+
+{
+  "token": "abc123def456...",
+  "newPassword": "newsecurepass123"
+}
+```
+
+**Response (200 OK):**
+
+```json
+{
+  "success": true,
+  "message": "Password reset successfully"
+}
+```
+
+**Error Responses:**
+
+- `400`: Invalid or expired token
+
+---
+
+### POST /api/auth/refresh
+
+Refresh access token using refresh token.
+
+| Header | Type | Required | Description |
+|--------|------|----------|-------------|
+| `Content-Type` | string | Yes | Must be `application/json` |
+
+| Body Parameter | Type | Required | Description |
+|----------------|------|----------|-------------|
+| `refreshToken` | string | Yes | Refresh token from login/verify |
+
+**Example Request:**
+
+```http
+POST /api/auth/refresh
+Content-Type: application/json
+
+{
+  "refreshToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+}
+```
+
+**Response (200 OK):**
+
+```json
+{
+  "success": true,
+  "data": {
+    "accessToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+  }
+}
+```
+
+**Error Responses:**
+
+- `400`: Refresh token required
+- `403`: Invalid or expired refresh token
+
+---
+
+### POST /api/auth/logout
+
+Logout (client-side token removal). This endpoint always returns success. Client should remove tokens from storage.
+
+| Header | Type | Required | Description |
+|--------|------|----------|-------------|
+| `Content-Type` | string | Yes | Must be `application/json` |
+
+**Example Request:**
+
+```http
+POST /api/auth/logout
+Content-Type: application/json
+```
+
+**Response (200 OK):**
+
+```json
+{
+  "success": true,
+  "message": "Logged out successfully"
+}
+```
+
+---
+
+### DELETE /api/auth/account
+
+Delete user account (soft delete - can be recovered within 30 days).
+
+| Header | Type | Required | Description |
+|--------|------|----------|-------------|
+| `Authorization` | string | Yes | `Bearer <accessToken>` |
+| `X-Device-ID` | string | Yes | Unique device identifier |
+
+**Example Request:**
+
+```http
+DELETE /api/auth/account
+Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+X-Device-ID: device-123
+```
+
+**Response (200 OK):**
+
+```json
+{
+  "success": true,
+  "message": "Account deleted successfully"
+}
+```
+
+**Error Responses:**
+
+- `401`: Invalid or expired token
+- `500`: Failed to delete account
+
+---
+
+### GET /api/auth/check-username
+
+Check if username is available.
+
+| Query Parameter | Type | Required | Description |
+|----------------|------|----------|-------------|
+| `username` | string | Yes | Username to check |
+
+**Example Request:**
+
+```http
+GET /api/auth/check-username?username=johndoe
+```
+
+**Response (200 OK):**
+
+```json
+{
+  "success": true,
+  "data": {
+    "available": true
+  }
+}
+```
+
+**Error Responses:**
+
+- `400`: Username parameter required
 
 ---
 

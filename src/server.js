@@ -103,6 +103,10 @@ app.use('/api/stock', managementRateLimiter, stockRoutes);
 const webhookRoutes = require('./routes/webhooks');
 app.use('/api/webhooks', webhookRateLimiter, webhookRoutes);
 
+// Auth routes (rate limiting handled within routes)
+const authRoutes = require('./routes/auth');
+app.use('/api/auth', authRoutes);
+
 // 404 handler - throw NotFoundError
 const { NotFoundError } = require('./utils/errors');
 app.use((req, res, next) => {
