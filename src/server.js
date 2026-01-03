@@ -79,15 +79,9 @@ const analyticsRateLimiter = createRateLimiter(getRateLimitConfig('analytics'), 
 const managementRateLimiter = createRateLimiter(getRateLimitConfig('management'), 'management');
 const webhookRateLimiter = createRateLimiter(getRateLimitConfig('webhooks'), 'webhooks');
 
-// Apply rate limiting to health check
-app.get('/health', healthRateLimiter, (req, res) => {
-  res.json({
-    status: 'ok',
-    message: 'Server is running',
-    timestamp: new Date().toISOString(),
-    uptime: process.uptime(),
-  });
-});
+// Health check routes
+const healthRoutes = require('./routes/health');
+app.use('/health', healthRateLimiter, healthRoutes);
 
 // Cache middleware - apply before other routes
 const { cacheMiddleware } = require('./services/cache/middleware');
