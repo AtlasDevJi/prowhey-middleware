@@ -56,15 +56,6 @@ app.use(compression());
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
-// Health check endpoint
-app.get('/health', (req, res) => {
-  res.json({
-    status: 'ok',
-    message: 'Server is running',
-    timestamp: new Date().toISOString(),
-    uptime: process.uptime(),
-  });
-});
 
 // API versioning middleware (placeholder for now)
 app.use((req, res, next) => {
@@ -73,25 +64,50 @@ app.use((req, res, next) => {
   next();
 });
 
+// Device ID extraction middleware (must be before rate limiting)
+const { extractDeviceId } = require('./middleware/device-id');
+app.use(extractDeviceId);
+
+// Rate limiting configuration
+const { getRateLimitConfig } = require('./config/rate-limit');
+const { createRateLimiter } = require('./middleware/rate-limit');
+
+// Create rate limiters for different endpoint types
+const healthRateLimiter = createRateLimiter(getRateLimitConfig('health'), 'health');
+const resourceRateLimiter = createRateLimiter(getRateLimitConfig('resource'), 'resource');
+const analyticsRateLimiter = createRateLimiter(getRateLimitConfig('analytics'), 'analytics');
+const managementRateLimiter = createRateLimiter(getRateLimitConfig('management'), 'management');
+const webhookRateLimiter = createRateLimiter(getRateLimitConfig('webhooks'), 'webhooks');
+
+// Apply rate limiting to health check
+app.get('/health', healthRateLimiter, (req, res) => {
+  res.json({
+    status: 'ok',
+    message: 'Server is running',
+    timestamp: new Date().toISOString(),
+    uptime: process.uptime(),
+  });
+});
+
 // Cache middleware - apply before other routes
 const { cacheMiddleware } = require('./services/cache/middleware');
-app.use('/api/resource', cacheMiddleware);
+app.use('/api/resource', resourceRateLimiter, cacheMiddleware);
 
 // Analytics routes
 const analyticsRoutes = require('./routes/analytics');
-app.use('/api/analytics', analyticsRoutes);
+app.use('/api/analytics', analyticsRateLimiter, analyticsRoutes);
 
 // Price routes
 const priceRoutes = require('./routes/price');
-app.use('/api/price', priceRoutes);
+app.use('/api/price', managementRateLimiter, priceRoutes);
 
 // Stock routes
 const stockRoutes = require('./routes/stock');
-app.use('/api/stock', stockRoutes);
+app.use('/api/stock', managementRateLimiter, stockRoutes);
 
 // Webhook routes
 const webhookRoutes = require('./routes/webhooks');
-app.use('/api/webhooks', webhookRoutes);
+app.use('/api/webhooks', webhookRateLimiter, webhookRoutes);
 
 // 404 handler
 app.use((req, res) => {
