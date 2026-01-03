@@ -1,0 +1,45 @@
+{
+  "name": "prowhey-middleware",
+  "version": "1.0.0",
+  "description": "Production middleware server for ProWhey mobile app",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "NODE_ENV=production node src/server.js",
+    "dev": "NODE_ENV=development nodemon src/server.js",
+    "test": "jest",
+    "lint": "eslint .",
+    "format": "prettier --write ."
+  },
+  "keywords": [
+    "middleware",
+    "api",
+    "cache",
+    "erpnext"
+  ],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "axios": "^1.13.2",
+    "compression": "^1.8.1",
+    "cors": "^2.8.5",
+    "dotenv": "^16.6.1",
+    "express": "^4.22.1",
+    "express-rate-limit": "^7.5.1",
+    "google-auth-library": "^9.15.1",
+    "helmet": "^7.2.0",
+    "ioredis": "^5.8.2",
+    "jsonwebtoken": "^9.0.3",
+    "zod": "^3.25.76"
+  },
+  "devDependencies": {
+    "@types/express": "^4.17.25",
+    "@types/jest": "^29.5.14",
+    "@types/node": "^20.19.27",
+    "eslint": "^8.57.1",
+    "jest": "^29.7.0",
+    "nodemon": "^3.1.11",
+    "prettier": "^3.7.4",
+    "supertest": "^6.3.4"
+  }
+}
