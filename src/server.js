@@ -77,6 +77,22 @@ app.use((req, res, next) => {
 const { cacheMiddleware } = require('./services/cache/middleware');
 app.use('/api/resource', cacheMiddleware);
 
+// Analytics routes
+const analyticsRoutes = require('./routes/analytics');
+app.use('/api/analytics', analyticsRoutes);
+
+// Price routes
+const priceRoutes = require('./routes/price');
+app.use('/api/price', priceRoutes);
+
+// Stock routes
+const stockRoutes = require('./routes/stock');
+app.use('/api/stock', stockRoutes);
+
+// Webhook routes
+const webhookRoutes = require('./routes/webhooks');
+app.use('/api/webhooks', webhookRoutes);
+
 // 404 handler
 app.use((req, res) => {
   res.status(404).json({

@@ -88,53 +88,22 @@ function parseBenefits(benefitsString) {
 }
 
 /**
- * Fetch product rating data from Redis
- * Rating breakdown stores vote counts by star (1-5), no average calculation
- * Structure: { "1": count, "2": count, "3": count, "4": count, "5": count, reviewCount: total, views: total }
+ * Fetch product analytics data from Redis
+ * Uses ERPNext 'name' field (e.g., WEB-ITM-0002) as key
+ * Returns views, rating breakdown, review count, and comments
  */
-async function fetchProductRatingData(itemCode) {
-  const { getRedisClient } = require('../redis/client');
-  const redis = getRedisClient();
-  const key = `rating:${itemCode}`;
-
+async function fetchProductAnalytics(name) {
+  const { fetchProductAnalytics: getAnalytics } = require('../analytics/analytics');
+  
   try {
-    const data = await redis.get(key);
-    if (!data) {
-      return {
-        ratingBreakdown: {
-          '1': 0,
-          '2': 0,
-          '3': 0,
-          '4': 0,
-          '5': 0,
-        },
-        reviewCount: 0,
-        views: 0,
-      };
-    }
-
-    const parsed = JSON.parse(data);
-    
-    // Ensure ratingBreakdown has all star counts (1-5)
-    const ratingBreakdown = {
-      '1': parsed.ratingBreakdown?.['1'] || 0,
-      '2': parsed.ratingBreakdown?.['2'] || 0,
-      '3': parsed.ratingBreakdown?.['3'] || 0,
-      '4': parsed.ratingBreakdown?.['4'] || 0,
-      '5': parsed.ratingBreakdown?.['5'] || 0,
-    };
-
-    return {
-      ratingBreakdown,
-      reviewCount: parsed.reviewCount || 0,
-      views: parsed.views || 0,
-    };
+    return await getAnalytics(name);
   } catch (error) {
-    logger.error('Failed to fetch rating data', {
-      itemCode,
+    logger.error('Failed to fetch product analytics', {
+      name,
       error: error.message,
     });
     return {
+      views: 0,
       ratingBreakdown: {
         '1': 0,
         '2': 0,
@@ -143,7 +112,7 @@ async function fetchProductRatingData(itemCode) {
         '5': 0,
       },
       reviewCount: 0,
-      views: 0,
+      comments: [],
     };
   }
 }
@@ -165,15 +134,15 @@ async function transformProduct(erpnextData) {
     return null;
   }
 
-  // Fetch Redis rating data
-  const redisData = await fetchProductRatingData(data.item_code);
-
-  // Direct mappings
+  // Direct mappings - analytics will be added separately in middleware
+  // Include 'name' field from ERPNext (e.g., WEB-ITM-0002) for analytics key
   const product = {
     name: data.web_item_name,
     web_item_name: data.web_item_name,
     item_code: data.item_code,
     item_name: data.item_name,
+    erpnext_name: data.name, // ERPNext name field (e.g., WEB-ITM-0002) for analytics
+    erpnext_name: data.name, // ERPNext name field (e.g., WEB-ITM-0002) for analytics
     brand: data.brand || '',
     item_group: data.item_group || '',
     category: data.item_group || '', // Same value
@@ -190,16 +159,13 @@ async function transformProduct(erpnextData) {
   product.nutritionFacts = parseNutritionFacts(data.nutrition_facts);
   product.benefits = parseBenefits(data.benefits);
 
-  // Add Redis data (no rating average - app will calculate from breakdown)
-  product.reviewCount = redisData.reviewCount || 0;
-  product.views = redisData.views || 0;
-  product.ratingBreakdown = redisData.ratingBreakdown || {
-    '1': 0,
-    '2': 0,
-    '3': 0,
-    '4': 0,
-    '5': 0,
-  };
+  // Fetch and attach prices for all sizes
+  // Prices are fetched on-demand and cached in Redis
+  const { getProductPrices } = require('../price/price');
+  product.prices = await getProductPrices(data.name, product.variants);
+
+  // Note: Analytics (views, ratings, comments) are NOT included here
+  // They will be fetched separately and returned as top-level fields
 
   return product;
 }
@@ -233,6 +199,6 @@ module.exports = {
   parseCustomVariant,
   parseNutritionFacts,
   parseBenefits,
-  fetchProductRatingData,
+  fetchProductAnalytics,
 };
 

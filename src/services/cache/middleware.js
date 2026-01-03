@@ -8,6 +8,7 @@ const {
 const { fetchProduct, fetchProductQuery } = require('../erpnext/client');
 const { extractEntityFromPath } = require('../../utils/data-types');
 const { logger } = require('../logger');
+const { fetchProductAnalytics } = require('../cache/transformer');
 
 /**
  * Generate MD5 hash for query string
@@ -96,46 +97,83 @@ function extractItemCodeFromQuery(queryString) {
 async function handleProductRequest(req, res, itemCode) {
   const cached = await getCache('product', itemCode);
 
+  let productData;
+  let erpnextName; // ERPNext 'name' field (e.g., WEB-ITM-0002)
+
   if (cached) {
     logger.info('Cache hit', { entityType: 'product', entityId: itemCode });
     console.log(`✅ CACHE HIT: product:${itemCode}`);
-    // Return already-transformed app-ready data
-    return res.json(cached);
-  }
+    productData = cached;
+    erpnextName = cached.erpnext_name; // Use ERPNext name field for analytics
+  } else {
+    logger.info('Cache miss', { entityType: 'product', entityId: itemCode });
+    console.log(`❌ CACHE MISS: product:${itemCode} - Fetching from ERPNext...`);
 
-  logger.info('Cache miss', { entityType: 'product', entityId: itemCode });
-  console.log(`❌ CACHE MISS: product:${itemCode} - Fetching from ERPNext...`);
+    try {
+      // Fetch product - transformation happens in fetchProduct
+      // fetchProduct returns transformed app-ready data
+      // Uses server's ERPNext credentials (not user auth)
+      const transformedData = await fetchProduct(itemCode);
 
-  try {
-    // Fetch product - transformation happens in fetchProduct
-    // fetchProduct returns transformed app-ready data
-    // Uses server's ERPNext credentials (not user auth)
-    const transformedData = await fetchProduct(itemCode);
+      if (!transformedData) {
+        return res.status(404).json({
+          success: false,
+          error: 'Not found',
+          message: 'Product not found',
+        });
+      }
 
-    if (!transformedData) {
-      return res.status(404).json({
+      productData = transformedData;
+      erpnextName = transformedData.erpnext_name; // Use ERPNext name field for analytics
+
+      // Cache transformed data (app-ready format)
+      await setCache('product', itemCode, productData);
+      console.log(`💾 CACHED: product:${itemCode} - Stored in Redis`);
+    } catch (error) {
+      logger.error('ERPNext fetch error', {
+        entityType: 'product',
+        entityId: itemCode,
+        error: error.message,
+      });
+      return res.status(500).json({
         success: false,
-        error: 'Not found',
-        message: 'Product not found',
+        error: 'Internal Server Error',
+        message: 'Failed to fetch product',
       });
     }
+  }
 
-    // Cache transformed data (app-ready format)
-    await setCache('product', itemCode, transformedData);
-    console.log(`💾 CACHED: product:${itemCode} - Stored in Redis`);
+  // Fetch analytics separately using ERPNext 'name' field (e.g., WEB-ITM-0002)
+  // Analytics are stored separately and returned as top-level fields
+  try {
+    const analytics = await fetchProductAnalytics(erpnextName);
 
-    // Return transformed data to app
-    return res.json(transformedData);
+    // Return product and analytics as separate top-level fields
+    return res.json({
+      product: productData,
+      views: analytics.views,
+      ratingBreakdown: analytics.ratingBreakdown,
+      reviewCount: analytics.reviewCount,
+      comments: analytics.comments,
+    });
   } catch (error) {
-    logger.error('ERPNext fetch error', {
-      entityType: 'product',
-      entityId: itemCode,
+    logger.error('Analytics fetch error', {
+      erpnextName,
       error: error.message,
     });
-    return res.status(500).json({
-      success: false,
-      error: 'Internal Server Error',
-      message: 'Failed to fetch product',
+    // Return product even if analytics fail, with default analytics
+    return res.json({
+      product: productData,
+      views: 0,
+      ratingBreakdown: {
+        '1': 0,
+        '2': 0,
+        '3': 0,
+        '4': 0,
+        '5': 0,
+      },
+      reviewCount: 0,
+      comments: [],
     });
   }
 }

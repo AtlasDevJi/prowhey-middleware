@@ -20,3 +20,4 @@ function getQueryTTL(entityType) {
 
 module.exports = { getEntityTTL, getQueryTTL, CACHE_TTL, QUERY_CACHE_TTL };
 
+

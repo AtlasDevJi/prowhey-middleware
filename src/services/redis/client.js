@@ -60,3 +60,4 @@ function closeRedisClient() {
 
 module.exports = { getRedisClient, closeRedisClient };
 
+

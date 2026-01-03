@@ -50,3 +50,4 @@ echo ""
 echo "Current setup: HTTP on port 80 -> Middleware on port 3001"
 echo "Test: curl http://193.42.63.107/health"
 
+

@@ -47,6 +47,7 @@ async function fetchProduct(itemCode) {
 
     // Fields to request
     const fields = [
+      'name', // ERPNext name field (e.g., WEB-ITM-0002) for analytics key
       'item_code',
       'item_name',
       'web_item_name',
@@ -162,10 +163,89 @@ async function fetchProductRaw(itemCode) {
   }
 }
 
+/**
+ * Fetch all published Website Items with only name and custom_variant fields
+ * Used for bulk price updates
+ * @returns {Promise<Array>} Array of {name, custom_variant} objects
+ */
+async function fetchPublishedWebsiteItems() {
+  try {
+    const client = createErpnextClient();
+    const doctype = 'Website Item';
+
+    const fields = ['name', 'custom_variant'];
+    const filters = [['published', '=', 1]];
+
+    const queryParams = new URLSearchParams({
+      fields: JSON.stringify(fields),
+      filters: JSON.stringify(filters),
+    });
+
+    const url = `${doctype}?${queryParams.toString()}`;
+    const response = await client.get(url);
+
+    if (!response.data || !response.data.data) {
+      return [];
+    }
+
+    return response.data.data;
+  } catch (error) {
+    logger.error('Failed to fetch published website items', {
+      error: error.message,
+      status: error.response?.status,
+    });
+    throw error;
+  }
+}
+
+/**
+ * Fetch stock availability for an item from Bin API
+ * Returns array of warehouse names where item has stock (actual_qty > 0)
+ * @param {string} itemCode - The item code to fetch stock for
+ * @returns {Promise<Array<string>>} Array of warehouse names with stock
+ */
+async function fetchItemStock(itemCode) {
+  try {
+    const client = createErpnextClient();
+    const doctype = 'Bin';
+
+    const fields = ['item_code', 'warehouse'];
+    const filters = [
+      ['item_code', '=', itemCode],
+      ['actual_qty', '>', 0],
+    ];
+
+    const queryParams = new URLSearchParams({
+      fields: JSON.stringify(fields),
+      filters: JSON.stringify(filters),
+    });
+
+    const url = `${doctype}?${queryParams.toString()}`;
+    const response = await client.get(url);
+
+    if (!response.data || !response.data.data || response.data.data.length === 0) {
+      return [];
+    }
+
+    // Extract warehouse names from response
+    const warehouses = response.data.data.map((bin) => bin.warehouse);
+    return warehouses;
+  } catch (error) {
+    logger.error('Failed to fetch item stock from ERPNext', {
+      itemCode,
+      error: error.message,
+      status: error.response?.status,
+    });
+    return [];
+  }
+}
+
 module.exports = {
   createErpnextClient,
   fetchProduct,
   fetchProductQuery,
   fetchProductRaw,
+  fetchPublishedWebsiteItems,
+  fetchItemStock,
 };
 

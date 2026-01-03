@@ -194,6 +194,153 @@ async function cacheExists(entityType, entityId) {
   }
 }
 
+/**
+ * Get price from Redis cache
+ * Key format: price:{erpnextName}:{sizeUnit}
+ * Returns price as number or null if not found
+ */
+async function getPrice(erpnextName, sizeUnit) {
+  try {
+    const redis = getRedisClient();
+    const key = `price:${erpnextName}:${sizeUnit}`;
+    const price = await redis.get(key);
+    
+    if (!price) {
+      return null;
+    }
+    
+    return parseFloat(price);
+  } catch (error) {
+    logger.error('Price get error', {
+      erpnextName,
+      sizeUnit,
+      error: error.message,
+    });
+    return null;
+  }
+}
+
+/**
+ * Set price in Redis cache
+ * Key format: price:{erpnextName}:{sizeUnit}
+ * No TTL - prices persist until updated
+ */
+async function setPrice(erpnextName, sizeUnit, price) {
+  try {
+    const redis = getRedisClient();
+    const key = `price:${erpnextName}:${sizeUnit}`;
+    
+    // Store as string (Redis stores numbers as strings)
+    await redis.set(key, String(price));
+    
+    return true;
+  } catch (error) {
+    logger.error('Price set error', {
+      erpnextName,
+      sizeUnit,
+      price,
+      error: error.message,
+    });
+    return false;
+  }
+}
+
+/**
+ * Get stock availability array for an item_code
+ * Key format: availability:{itemCode}
+ * Returns array of 0s and 1s or null if not found
+ */
+async function getStockAvailability(itemCode) {
+  try {
+    const redis = getRedisClient();
+    const key = `availability:${itemCode}`;
+    const data = await redis.get(key);
+    
+    if (!data) {
+      return null;
+    }
+    
+    return JSON.parse(data);
+  } catch (error) {
+    logger.error('Stock availability get error', {
+      itemCode,
+      error: error.message,
+    });
+    return null;
+  }
+}
+
+/**
+ * Set stock availability array for an item_code
+ * Key format: availability:{itemCode}
+ * No TTL - availability persists until updated
+ */
+async function setStockAvailability(itemCode, availabilityArray) {
+  try {
+    const redis = getRedisClient();
+    const key = `availability:${itemCode}`;
+    
+    // Store as JSON string
+    await redis.set(key, JSON.stringify(availabilityArray));
+    
+    return true;
+  } catch (error) {
+    logger.error('Stock availability set error', {
+      itemCode,
+      availabilityArray,
+      error: error.message,
+    });
+    return false;
+  }
+}
+
+/**
+ * Get warehouse reference array
+ * Key: warehouses:reference
+ * Returns array of warehouse names in alphabetical order
+ */
+async function getWarehouseReference() {
+  try {
+    const redis = getRedisClient();
+    const key = 'warehouses:reference';
+    const data = await redis.get(key);
+    
+    if (!data) {
+      return null;
+    }
+    
+    return JSON.parse(data);
+  } catch (error) {
+    logger.error('Warehouse reference get error', {
+      error: error.message,
+    });
+    return null;
+  }
+}
+
+/**
+ * Set warehouse reference array
+ * Key: warehouses:reference
+ * No TTL - reference persists until updated
+ */
+async function setWarehouseReference(warehouseArray) {
+  try {
+    const redis = getRedisClient();
+    const key = 'warehouses:reference';
+    
+    // Store as JSON string
+    await redis.set(key, JSON.stringify(warehouseArray));
+    
+    return true;
+  } catch (error) {
+    logger.error('Warehouse reference set error', {
+      warehouseArray,
+      error: error.message,
+    });
+    return false;
+  }
+}
+
 module.exports = {
   getCache,
   setCache,
@@ -203,5 +350,12 @@ module.exports = {
   setQueryCache,
   deleteQueryCache,
   cacheExists,
+  getPrice,
+  setPrice,
+  getStockAvailability,
+  setStockAvailability,
+  getWarehouseReference,
+  setWarehouseReference,
 };
+
 
