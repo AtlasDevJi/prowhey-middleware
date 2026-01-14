@@ -1,4 +1,3 @@
-const { z } = require('zod');
 const { logger } = require('../services/logger');
 const { sanitizeObject, sanitizePathParam } = require('../utils/sanitize');
 const { ValidationError } = require('../utils/errors');
@@ -76,14 +75,14 @@ function validateRequest(schema) {
 
       next();
     } catch (error) {
-      // If it's already an AppError, re-throw it
+      // If it's already an AppError, pass it to the error handler
       if (error.isOperational) {
-        throw error;
+        return next(error);
       }
 
-      // Otherwise, wrap in InternalServerError
+      // Otherwise, wrap in InternalServerError and pass along
       const { InternalServerError } = require('../utils/errors');
-      throw new InternalServerError('Validation processing failed');
+      return next(new InternalServerError('Validation processing failed'));
     }
   };
 }

@@ -49,7 +49,7 @@ const DEFAULT_WAREHOUSE_REFERENCE = [
  * @returns {Promise<Array<string>>} Warehouse reference array from Redis
  */
 async function getWarehouseReferenceArray() {
-  let reference = await getWarehouseReference();
+  const reference = await getWarehouseReference();
   
   // If not exists, initialize with default (user can change it in Redis later)
   if (!reference || !Array.isArray(reference) || reference.length === 0) {

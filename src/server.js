@@ -7,15 +7,20 @@ const envFile =
 require('dotenv').config({ path: envFile });
 
 const express = require('express');
-const helmet = require('helmet');
 const cors = require('cors');
 const compression = require('compression');
 
 const app = express();
 const PORT = process.env.PORT || 3001;
 
-// Security middleware
-app.use(helmet());
+// Enhanced security headers
+const { securityHeaders, customSecurityHeaders } = require('./middleware/security-headers');
+app.use(securityHeaders);
+app.use(customSecurityHeaders);
+
+// Request ID middleware (early in chain for tracking)
+const { requestIdMiddleware } = require('./middleware/request-id');
+app.use(requestIdMiddleware);
 
 // CORS configuration
 // For React Native mobile apps: mobile apps don't send Origin headers,
@@ -52,9 +57,17 @@ app.use(
 // Compression
 app.use(compression());
 
-// Body parsing
-app.use(express.json({ limit: '10mb' }));
-app.use(express.urlencoded({ extended: true, limit: '10mb' }));
+// Body parsing with enhanced security
+app.use(express.json({ 
+  limit: '10mb',
+  strict: true, // Only parse arrays and objects
+  type: 'application/json',
+}));
+app.use(express.urlencoded({ 
+  extended: true, 
+  limit: '10mb',
+  parameterLimit: 100, // Limit number of parameters
+}));
 
 
 // API versioning middleware (placeholder for now)
@@ -67,6 +80,10 @@ app.use((req, res, next) => {
 // Device ID extraction middleware (must be before rate limiting)
 const { extractDeviceId } = require('./middleware/device-id');
 app.use(extractDeviceId);
+
+// Security monitoring middleware (detects suspicious patterns)
+const { securityMonitor } = require('./middleware/security-monitor');
+app.use(securityMonitor);
 
 // Rate limiting configuration
 const { getRateLimitConfig } = require('./config/rate-limit');
@@ -103,13 +120,17 @@ app.use('/api/stock', managementRateLimiter, stockRoutes);
 const webhookRoutes = require('./routes/webhooks');
 app.use('/api/webhooks', webhookRateLimiter, webhookRoutes);
 
+// Security routes (certificate info, etc.)
+const securityRoutes = require('./routes/security');
+app.use('/api/security', securityRoutes);
+
 // Auth routes (rate limiting handled within routes)
 const authRoutes = require('./routes/auth');
 app.use('/api/auth', authRoutes);
 
 // 404 handler - throw NotFoundError
 const { NotFoundError } = require('./utils/errors');
-app.use((req, res, next) => {
+app.use((req, _res, _next) => {
   throw new NotFoundError(`Route ${req.method} ${req.path} not found`);
 });
 

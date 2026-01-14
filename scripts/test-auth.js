@@ -327,6 +327,10 @@ async function testRefreshToken() {
       accessToken = result.data.data.accessToken;
       console.log('\n📝 New access token stored');
     }
+    if (result.data.data.refreshToken) {
+      refreshToken = result.data.data.refreshToken;
+      console.log('📝 New refresh token stored (token rotation)');
+    }
   } else {
     printError('Token refresh failed', result.error);
   }

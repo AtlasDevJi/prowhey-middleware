@@ -50,7 +50,7 @@ const {
   InternalServerError,
 } = require('../utils/errors');
 const { logger } = require('../services/logger');
-const { getRateLimitConfig } = require('../config/rate-limit');
+const { SecurityLogger } = require('../services/security-logger');
 const { createRateLimiter } = require('../middleware/rate-limit');
 
 // Create rate limiter for auth endpoints
@@ -233,14 +233,20 @@ router.post(
 
       const isValid = await verifyPassword(password, user.passwordHash);
       if (!isValid) {
+        // Log failed authentication attempt
+        SecurityLogger.logAuthAttempt(user.id, user.email, false, 'Invalid password');
         throw new UnauthorizedError('Invalid credentials');
       }
     }
 
     // Check if verified
     if (!user.isVerified) {
+      SecurityLogger.logAuthAttempt(user.id, user.email, false, 'Account not verified');
       throw new UnauthorizedError('Account not verified. Please verify your account first.');
     }
+
+    // Log successful authentication
+    SecurityLogger.logAuthAttempt(user.id, user.email, true);
 
     // Update last login
     await updateUser(user.id, { lastLogin: new Date().toISOString() });
@@ -277,7 +283,7 @@ router.post(
   authRateLimiter,
   validateRequest(googleLoginRequestSchema),
   handleAsyncErrors(async (req, res) => {
-    const { email, name, googleId, deviceId } = req.validatedBody;
+    const { email, googleId, deviceId } = req.validatedBody;
 
     // Check if user exists
     let user = await getUserByGoogleId(googleId);
@@ -405,7 +411,8 @@ router.post(
 
 /**
  * POST /api/auth/refresh
- * Refresh access token
+ * Refresh access token and issue new refresh token (token rotation)
+ * This enables indefinite login sessions as long as the user uses the app regularly
  */
 router.post(
   '/refresh',
@@ -421,7 +428,7 @@ router.post(
       throw new UnauthorizedError('Invalid or expired refresh token');
     }
 
-    // Generate new access token
+    // Generate new tokens (both access and refresh for token rotation)
     const payload = {
       userId: decoded.userId,
       email: decoded.email,
@@ -432,6 +439,7 @@ router.post(
       success: true,
       data: {
         accessToken: generateAccessToken(payload),
+        refreshToken: generateRefreshToken(payload), // New refresh token (rotation)
       },
     });
   })

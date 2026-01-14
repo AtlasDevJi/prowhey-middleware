@@ -135,7 +135,7 @@ function sanitizeNumber(value, options = {}) {
  * @param {object} schema - Zod schema (for reference, not used directly)
  * @returns {object} - Sanitized object
  */
-function sanitizeObject(obj, schema = null) {
+function sanitizeObject(obj, _schema = null) {
   if (obj === null || obj === undefined) {
     return obj;
   }
@@ -178,6 +178,76 @@ function sanitizeObject(obj, schema = null) {
   return sanitized;
 }
 
+/**
+ * Prevent SQL injection (for any SQL-like queries)
+ * Note: We use parameterized queries, but this adds extra protection
+ * @param {string} str - String to sanitize
+ * @returns {string} - Sanitized string
+ */
+function sanitizeSQL(str) {
+  if (typeof str !== 'string') return str;
+  
+  // Remove SQL injection patterns
+  return str
+    .replace(/['";\\]/g, '')
+    .replace(/--/g, '')
+    .replace(/\/\*/g, '')
+    .replace(/\*\//g, '')
+    .replace(/xp_/gi, '')
+    .replace(/sp_/gi, '');
+}
+
+/**
+ * Prevent NoSQL injection
+ * @param {object} obj - Object to sanitize
+ * @returns {object} - Sanitized object
+ */
+function sanitizeNoSQL(obj) {
+  if (typeof obj !== 'object' || obj === null) return obj;
+  
+  const sanitized = {};
+  for (const [key, value] of Object.entries(obj)) {
+    // Prevent MongoDB injection patterns
+    if (typeof value === 'string') {
+      // Remove $ operators
+      sanitized[key] = value.replace(/\$/g, '');
+    } else {
+      sanitized[key] = value;
+    }
+  }
+  return sanitized;
+}
+
+/**
+ * Prevent command injection
+ * @param {string} str - String to sanitize
+ * @returns {string} - Sanitized string
+ */
+function sanitizeCommand(str) {
+  if (typeof str !== 'string') return str;
+  
+  // Remove shell command characters
+  return str
+    .replace(/[;&|`$(){}[\]]/g, '')
+    .replace(/</g, '')
+    .replace(/>/g, '');
+}
+
+/**
+ * Prevent path traversal
+ * @param {string} path - Path to sanitize
+ * @returns {string} - Sanitized path
+ */
+function sanitizePath(path) {
+  if (typeof path !== 'string') return path;
+  
+  // Remove path traversal patterns
+  return path
+    .replace(/\.\./g, '')
+    .replace(/\/\//g, '/')
+    .replace(/^\/+/, '');
+}
+
 module.exports = {
   sanitizeHtml,
   sanitizeString,
@@ -185,5 +255,9 @@ module.exports = {
   sanitizePathParam,
   sanitizeNumber,
   sanitizeObject,
+  sanitizeSQL,
+  sanitizeNoSQL,
+  sanitizeCommand,
+  sanitizePath,
 };
 

@@ -63,7 +63,12 @@ function formatErrorForLogging(error, req = null) {
  */
 function handleAsyncErrors(fn) {
   return (req, res, next) => {
-    Promise.resolve(fn(req, res, next)).catch(next);
+    try {
+      Promise.resolve(fn(req, res, next)).catch(next);
+    } catch (error) {
+      // Handle synchronous errors
+      next(error);
+    }
   };
 }
 

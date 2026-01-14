@@ -20,6 +20,11 @@ const app = express();
 app.use(express.json());
 app.use('/api/analytics', analyticsRoutes);
 
+// Add error handler for consistent error responses
+const { errorHandler } = require('../../../src/middleware/error-handler');
+app.use(errorHandler);
+app.use(errorHandler);
+
 describe('Analytics Routes Integration Tests', () => {
   beforeEach(() => {
     jest.clearAllMocks();
@@ -62,7 +67,7 @@ describe('Analytics Routes Integration Tests', () => {
     });
 
     test('should reject empty name', async () => {
-      const response = await request(app)
+      await request(app)
         .post('/api/analytics/product//view')
         .expect(404); // Express routing issue, but validation would catch it
     });
@@ -204,7 +209,7 @@ describe('Analytics Routes Integration Tests', () => {
     test('should sanitize XSS in comment text', async () => {
       addProductComment.mockResolvedValue([]);
 
-      const response = await request(app)
+      await request(app)
         .post('/api/analytics/product/WEB-ITM-0002/comment')
         .send({
           text: '<script>alert("xss")</script>',

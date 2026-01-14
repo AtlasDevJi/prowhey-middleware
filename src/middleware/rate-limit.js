@@ -1,6 +1,7 @@
 const rateLimit = require('express-rate-limit');
 const RedisRateLimitStore = require('./rate-limit-store');
 const { logger } = require('../services/logger');
+const { SecurityLogger } = require('../services/security-logger');
 
 /**
  * Create rate limiter middleware with device ID-based limiting
@@ -47,6 +48,13 @@ function createRateLimiter(config, endpointType = 'unknown') {
         remaining: 0,
       });
 
+      // Security logging
+      SecurityLogger.logRateLimitViolation(
+        req.deviceId || 'unknown',
+        req.path,
+        req.ip
+      );
+
       res.status(429).json({
         success: false,
         error: 'Too Many Requests',
@@ -70,7 +78,7 @@ function createRateLimiter(config, endpointType = 'unknown') {
     skipFailedRequests: true,
 
     // On Redis store error, allow request (graceful degradation)
-    skip: (req) => {
+    skip: (_req) => {
       // This is handled in the store's increment method
       return false;
     },

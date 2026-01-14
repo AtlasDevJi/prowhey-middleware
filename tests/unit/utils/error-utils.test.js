@@ -4,7 +4,7 @@ const {
   formatErrorForLogging,
   handleAsyncErrors,
 } = require('../../../src/utils/error-utils');
-const { AppError, ValidationError, InternalServerError } = require('../../../src/utils/errors');
+const { ValidationError } = require('../../../src/utils/errors');
 
 describe('Error Utilities', () => {
   describe('isOperationalError', () => {
@@ -57,6 +57,7 @@ describe('Error Utilities', () => {
       const req = {
         path: '/api/test',
         method: 'GET',
+        get: jest.fn(() => null),
       };
 
       const context = getErrorContext(req);
@@ -121,7 +122,7 @@ describe('Error Utilities', () => {
 
   describe('handleAsyncErrors', () => {
     test('should pass through successful async handler', async () => {
-      const handler = jest.fn(async (req, res, next) => {
+      const handler = jest.fn(async (req, res, _next) => {
         res.json({ success: true });
       });
 

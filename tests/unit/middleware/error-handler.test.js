@@ -2,7 +2,6 @@ const { errorHandler } = require('../../../src/middleware/error-handler');
 const {
   ValidationError,
   NotFoundError,
-  InternalServerError,
 } = require('../../../src/utils/errors');
 const { logger } = require('../../../src/services/logger');
 

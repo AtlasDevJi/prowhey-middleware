@@ -113,24 +113,42 @@ const accessToken = await SecureStore.getItemAsync('accessToken');
 const refreshToken = await SecureStore.getItemAsync('refreshToken');
 ```
 
-### Refresh Access Token
+### Refresh Access Token (Token Rotation)
+
+**Important**: The refresh endpoint returns a **new refresh token** each time. You must store it to maintain the session.
 
 ```javascript
-// When access token expires (401 error)
-const refreshResponse = await fetch('http://localhost:3001/api/auth/refresh', {
-  method: 'POST',
-  headers: {
-    'Content-Type': 'application/json',
-  },
-  body: JSON.stringify({
-    refreshToken: refreshToken,
-  }),
-});
+// When access token expires (401 error) or proactively
+async function refreshAccessToken() {
+  const refreshToken = await SecureStore.getItemAsync('refreshToken');
+  
+  const refreshResponse = await fetch('http://localhost:3001/api/auth/refresh', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      refreshToken: refreshToken,
+    }),
+  });
 
-const refreshData = await refreshResponse.json();
-const newAccessToken = refreshData.data.accessToken;
-// Update stored access token
+  const refreshData = await refreshResponse.json();
+  
+  // IMPORTANT: Store both new tokens (token rotation)
+  const newAccessToken = refreshData.data.accessToken;
+  const newRefreshToken = refreshData.data.refreshToken; // New refresh token
+  
+  await SecureStore.setItemAsync('accessToken', newAccessToken);
+  await SecureStore.setItemAsync('refreshToken', newRefreshToken);
+  
+  return newAccessToken;
+}
 ```
+
+**Token Rotation Benefits:**
+- Users stay logged in indefinitely as long as they use the app
+- Each refresh extends the session automatically
+- More secure: old refresh tokens become invalid after use
 
 ## Profile Updates
 
@@ -220,8 +238,8 @@ async function makeAuthenticatedRequest(url, options = {}) {
 
   // If token expired, refresh and retry
   if (response.status === 401) {
-    const refreshToken = await SecureStore.getItemAsync('refreshToken');
-    const newAccessToken = await refreshAccessToken(refreshToken);
+    // refreshAccessToken() handles storing the new refresh token automatically
+    const newAccessToken = await refreshAccessToken();
     
     // Retry request with new token
     return fetch(url, {

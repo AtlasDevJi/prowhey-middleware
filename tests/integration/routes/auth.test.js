@@ -14,8 +14,6 @@ const {
   createUser,
   getUserById,
   getUserByEmail,
-  getUserByUsername,
-  getUserByGoogleId,
   updateUser,
   softDeleteUser,
   emailExists,
@@ -25,13 +23,7 @@ const {
   sendVerificationCode,
   verifyCode,
   storeEmailVerificationCode,
-  verifyEmailCode,
 } = require('../../../src/services/auth/verification');
-const {
-  storeResetToken,
-  validateResetToken,
-  invalidateResetToken,
-} = require('../../../src/services/auth/password-reset');
 
 const app = express();
 app.use(express.json());

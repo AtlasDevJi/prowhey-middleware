@@ -4,12 +4,10 @@ const {
   transformProduct,
   transformQueryResults,
 } = require('../cache/transformer');
-const { getDoctype } = require('../../utils/data-types');
 
 const ERPNEXT_API_URL = process.env.ERPNEXT_API_URL;
 const ERPNEXT_API_KEY = process.env.ERPNEXT_API_KEY;
 const ERPNEXT_API_SECRET = process.env.ERPNEXT_API_SECRET;
-const ERPNEXT_VERSION = process.env.ERPNEXT_VERSION || 'v1';
 
 /**
  * Create ERPNext API client

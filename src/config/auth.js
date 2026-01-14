@@ -18,7 +18,7 @@ module.exports = {
     return 'dev-refresh-secret-change-in-production';
   })(),
   JWT_ACCESS_EXPIRY: process.env.JWT_ACCESS_EXPIRY || '15m',
-  JWT_REFRESH_EXPIRY: process.env.JWT_REFRESH_EXPIRY || '7d',
+  JWT_REFRESH_EXPIRY: process.env.JWT_REFRESH_EXPIRY || '365d', // 1 year (safety net, but tokens rotate on each refresh)
 
   // Password Configuration
   PASSWORD_MIN_LENGTH: parseInt(process.env.PASSWORD_MIN_LENGTH || '6', 10),

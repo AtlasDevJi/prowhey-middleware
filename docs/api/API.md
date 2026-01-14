@@ -66,8 +66,14 @@ All authentication endpoints are prefixed with `/api/auth`. Most endpoints requi
 ### JWT Tokens
 
 - **Access Token**: Short-lived (15 minutes), used for API requests
-- **Refresh Token**: Long-lived (7 days), used to get new access tokens
+- **Refresh Token**: Long-lived (1 year safety net), used to get new access tokens
+- **Token Rotation**: Each refresh returns a new refresh token, enabling indefinite login sessions
 - **Token Format**: Include in `Authorization` header as `Bearer <token>`
+
+**Indefinite Login:**
+- Users stay logged in indefinitely as long as they use the app regularly
+- Each token refresh issues a new refresh token, extending the session
+- Users only need to log in again if they don't use the app for over 1 year, or if they explicitly log out
 
 ---
 
@@ -591,7 +597,13 @@ X-Device-ID: device-123
 
 ### POST /api/auth/refresh
 
-Refresh access token using refresh token.
+Refresh access token and issue new refresh token (token rotation). This enables **indefinite login sessions** as long as the user uses the app regularly.
+
+**How Token Rotation Works:**
+- Each time you refresh, you receive a **new refresh token** along with a new access token
+- As long as the user uses the app (and tokens are refreshed), they stay logged in indefinitely
+- The refresh token has a 1-year expiry as a safety net, but it's renewed on each refresh
+- **Important**: Always store the new refresh token returned in the response
 
 | Header | Type | Required | Description |
 |--------|------|----------|-------------|
@@ -599,7 +611,7 @@ Refresh access token using refresh token.
 
 | Body Parameter | Type | Required | Description |
 |----------------|------|----------|-------------|
-| `refreshToken` | string | Yes | Refresh token from login/verify |
+| `refreshToken` | string | Yes | Refresh token from login/verify or previous refresh |
 
 **Example Request:**
 
@@ -618,10 +630,13 @@ Content-Type: application/json
 {
   "success": true,
   "data": {
-    "accessToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+    "accessToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+    "refreshToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
   }
 }
 ```
+
+> **Important**: The response includes a **new refresh token**. You must store this new refresh token and use it for the next refresh request. The old refresh token becomes invalid after use.
 
 **Error Responses:**
 
@@ -903,7 +918,12 @@ POST /api/analytics/product/WEB-ITM-0002/view
 
 **Endpoint:** `POST /api/analytics/product/:name/rating`
 
-Adds a star rating (1-5) to a product. Updates the rating breakdown and review count.
+Adds a star rating (1-5) to a product. **Increments the specific star rating field in the breakdown** and updates the total review count.
+
+**How It Works:**
+- When a user votes (e.g., 2 stars), the API increments the `"2"` field in the `ratingBreakdown` object
+- The `reviewCount` is also incremented by 1
+- The response returns the updated breakdown with all star counts
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
@@ -913,7 +933,7 @@ Adds a star rating (1-5) to a product. Updates the rating breakdown and review c
 **Request Body:**
 ```json
 {
-  "starRating": 5
+  "starRating": 2
 }
 ```
 
@@ -923,7 +943,7 @@ POST /api/analytics/product/WEB-ITM-0002/rating
 Content-Type: application/json
 
 {
-  "starRating": 5
+  "starRating": 2
 }
 ```
 
@@ -933,14 +953,16 @@ Content-Type: application/json
   "success": true,
   "ratingBreakdown": {
     "1": 5,
-    "2": 2,
+    "2": 3,
     "3": 8,
     "4": 25,
     "5": 61
   },
-  "reviewCount": 101
+  "reviewCount": 102
 }
 ```
+
+> **Note:** In the example above, if the previous `"2"` count was 2, it is now incremented to 3 after the user's vote.
 
 **Storage:** Ratings are stored in Redis with key format: `rating:{erpnextName}`
 
@@ -957,6 +979,84 @@ Content-Type: application/json
   "reviewCount": 101
 }
 ```
+
+**Frontend Integration Guide:**
+
+1. **User Submits Rating:**
+   - Capture the star rating (1-5) from your UI component
+   - Send POST request with the selected rating
+
+2. **Update UI After Response:**
+   - Use the returned `ratingBreakdown` to update your star distribution display
+   - Use `reviewCount` to update the total reviews count
+   - Calculate average rating: `(1*count1 + 2*count2 + 3*count3 + 4*count4 + 5*count5) / reviewCount`
+
+3. **Example Frontend Code (React/JavaScript):**
+```javascript
+// Submit rating
+async function submitRating(productName, starRating) {
+  try {
+    const response = await fetch(
+      `${API_BASE_URL}/api/analytics/product/${productName}/rating`,
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ starRating }),
+      }
+    );
+
+    if (!response.ok) {
+      throw new Error('Failed to submit rating');
+    }
+
+    const data = await response.json();
+    
+    // Update your UI with the new breakdown
+    updateRatingDisplay(data.ratingBreakdown, data.reviewCount);
+    
+    return data;
+  } catch (error) {
+    console.error('Error submitting rating:', error);
+    throw error;
+  }
+}
+
+// Calculate average rating from breakdown
+function calculateAverageRating(ratingBreakdown, reviewCount) {
+  if (reviewCount === 0) return 0;
+  
+  const total = 
+    (1 * ratingBreakdown['1']) +
+    (2 * ratingBreakdown['2']) +
+    (3 * ratingBreakdown['3']) +
+    (4 * ratingBreakdown['4']) +
+    (5 * ratingBreakdown['5']);
+  
+  return total / reviewCount;
+}
+
+// Example usage
+const productName = 'WEB-ITM-0002';
+const userSelectedStars = 2; // User clicked 2 stars
+
+submitRating(productName, userSelectedStars)
+  .then((result) => {
+    console.log('Rating submitted successfully');
+    console.log('Updated breakdown:', result.ratingBreakdown);
+    console.log('Total reviews:', result.reviewCount);
+    console.log('Average rating:', calculateAverageRating(result.ratingBreakdown, result.reviewCount));
+  })
+  .catch((error) => {
+    console.error('Failed to submit rating:', error);
+  });
+```
+
+4. **Display Rating Breakdown:**
+   - Use `ratingBreakdown["1"]` through `ratingBreakdown["5"]` to show how many users voted for each star level
+   - Display as a bar chart or percentage distribution
+   - Example: "5 stars: 61 votes (60.4%)"
 
 **Error Responses:**
 

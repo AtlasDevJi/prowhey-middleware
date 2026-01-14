@@ -3,6 +3,7 @@ const express = require('express');
 const webhookRoutes = require('../../../src/routes/webhooks');
 const { setCachedPrice } = require('../../../src/services/price/price');
 const { deleteCache } = require('../../../src/services/redis/cache');
+const { errorHandler } = require('../../../src/middleware/error-handler');
 
 // Mock services
 jest.mock('../../../src/services/price/price');
@@ -11,6 +12,7 @@ jest.mock('../../../src/services/redis/cache');
 const app = express();
 app.use(express.json());
 app.use('/api/webhooks', webhookRoutes);
+app.use(errorHandler);
 
 describe('Webhook Routes Integration Tests', () => {
   beforeEach(() => {
@@ -60,7 +62,7 @@ describe('Webhook Routes Integration Tests', () => {
       setCachedPrice.mockResolvedValue(true);
       deleteCache.mockResolvedValue(true);
 
-      const response = await request(app)
+      await request(app)
         .post('/api/webhooks/price-update')
         .send({
           erpnextName: 'WEB-ITM-0002',
@@ -209,7 +211,7 @@ describe('Webhook Routes Integration Tests', () => {
         })
         .expect(500);
 
-      expect(response.body).toEqual({
+      expect(response.body).toMatchObject({
         success: false,
         error: 'Internal Server Error',
         code: 'INTERNAL_SERVER_ERROR',

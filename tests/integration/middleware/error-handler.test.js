@@ -4,7 +4,6 @@ const { errorHandler } = require('../../../src/middleware/error-handler');
 const {
   ValidationError,
   NotFoundError,
-  InternalServerError,
 } = require('../../../src/utils/errors');
 const { handleAsyncErrors } = require('../../../src/utils/error-utils');
 
@@ -22,7 +21,7 @@ describe('Error Handler Integration Tests', () => {
   });
 
   test('should handle ValidationError from route', async () => {
-    app.post('/test', (req, res, next) => {
+    app.post('/test', (_req, _res, _next) => {
       throw new ValidationError('Validation failed', {
         fields: [{ field: 'email', message: 'Invalid' }],
       });
@@ -43,7 +42,7 @@ describe('Error Handler Integration Tests', () => {
   });
 
   test('should handle NotFoundError from route', async () => {
-    app.get('/test', (req, res, next) => {
+    app.get('/test', (_req, _res, _next) => {
       throw new NotFoundError('Resource not found');
     });
     app.use(errorHandler);
@@ -59,7 +58,7 @@ describe('Error Handler Integration Tests', () => {
   });
 
   test('should handle async errors with handleAsyncErrors', async () => {
-    app.post('/test', handleAsyncErrors(async (req, res) => {
+    app.post('/test', handleAsyncErrors(async (_req, _res) => {
       throw new ValidationError('Async validation failed');
     }));
     app.use(errorHandler);
@@ -71,7 +70,7 @@ describe('Error Handler Integration Tests', () => {
   });
 
   test('should wrap non-operational errors', async () => {
-    app.get('/test', (req, res, next) => {
+    app.get('/test', (_req, _res, _next) => {
       throw new Error('Programming error');
     });
     app.use(errorHandler);
@@ -89,7 +88,7 @@ describe('Error Handler Integration Tests', () => {
   test('should include development fields in development mode', async () => {
     process.env.NODE_ENV = 'development';
 
-    app.get('/test', (req, res, next) => {
+    app.get('/test', (_req, _res, _next) => {
       throw new ValidationError('Test error');
     });
     app.use(errorHandler);
@@ -104,7 +103,7 @@ describe('Error Handler Integration Tests', () => {
   test('should exclude development fields in production mode', async () => {
     process.env.NODE_ENV = 'production';
 
-    app.get('/test', (req, res, next) => {
+    app.get('/test', (_req, _res, _next) => {
       throw new ValidationError('Test error');
     });
     app.use(errorHandler);
@@ -117,7 +116,7 @@ describe('Error Handler Integration Tests', () => {
   });
 
   test('should handle errors without details', async () => {
-    app.get('/test', (req, res, next) => {
+    app.get('/test', (_req, _res, _next) => {
       throw new NotFoundError('Not found');
     });
     app.use(errorHandler);

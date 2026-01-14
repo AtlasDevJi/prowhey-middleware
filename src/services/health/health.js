@@ -1,6 +1,5 @@
 const { getRedisClient } = require('../redis/client');
 const { createErpnextClient } = require('../erpnext/client');
-const { logger } = require('../logger');
 
 /**
  * Check Redis connection health

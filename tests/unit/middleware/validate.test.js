@@ -55,9 +55,10 @@ describe('Validation Middleware', () => {
       req.body = { name: '' };
 
       const middleware = validateRequest(schema);
-      
-      await expect(middleware(req, res, next)).rejects.toThrow(ValidationError);
-      expect(next).not.toHaveBeenCalled();
+
+      await middleware(req, res, next);
+
+      expect(next).toHaveBeenCalledWith(expect.any(ValidationError));
       expect(res.status).not.toHaveBeenCalled();
     });
 
@@ -110,9 +111,10 @@ describe('Validation Middleware', () => {
       req.body = { name: '', age: -1 };
 
       const middleware = validateRequest(schema);
-      
-      await expect(middleware(req, res, next)).rejects.toThrow(ValidationError);
-      expect(next).not.toHaveBeenCalled();
+
+      await middleware(req, res, next);
+
+      expect(next).toHaveBeenCalledWith(expect.any(ValidationError));
     });
 
     test('should handle missing params/body/query', async () => {
@@ -137,9 +139,10 @@ describe('Validation Middleware', () => {
       const invalidSchema = null;
 
       const middleware = validateRequest(invalidSchema);
-      
-      await expect(middleware(req, res, next)).rejects.toThrow(InternalServerError);
-      expect(next).not.toHaveBeenCalled();
+
+      await middleware(req, res, next);
+
+      expect(next).toHaveBeenCalledWith(expect.any(InternalServerError));
     });
   });
 });

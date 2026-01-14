@@ -10,7 +10,7 @@ const { InternalServerError } = require('../utils/errors');
  * @param {object} res - Express response object
  * @param {function} next - Express next middleware
  */
-function errorHandler(err, req, res, next) {
+function errorHandler(err, req, res, _next) {
   // Determine if error is operational (expected) or programming (unexpected)
   const isOperational = isOperationalError(err);
 
