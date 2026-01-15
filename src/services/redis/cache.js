@@ -331,9 +331,11 @@ async function setStockAvailability(itemCode, availabilityArray) {
 }
 
 /**
- * Get warehouse reference array
+ * Get warehouse reference array from Redis
  * Key: warehouses:reference
- * Returns array of warehouse names in alphabetical order
+ * Returns array of warehouse names or objects with {name, lat, lng}
+ * Supports both formats: strings or objects with coordinates
+ * Coordinates should be stored in Redis, not in code
  */
 async function getWarehouseReference() {
   try {

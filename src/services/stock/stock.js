@@ -38,6 +38,10 @@ function parseCustomVariant(customVariantString) {
  * This is only used if warehouses:reference doesn't exist in Redis
  * After initialization, always use the value from Redis
  * You can update warehouses:reference in Redis anytime and it will be used
+ * 
+ * Note: Store coordinates in Redis, not in code. Update warehouses:reference in Redis
+ * with format: [{"name":"Warehouse Name","lat":35.9333,"lng":36.6333}, ...]
+ * The system supports both formats (strings or objects with lat/lng)
  */
 const DEFAULT_WAREHOUSE_REFERENCE = [
   'Idlib Store',
@@ -50,10 +54,41 @@ const DEFAULT_WAREHOUSE_REFERENCE = [
 ];
 
 /**
+ * Check if warehouse reference item is in new format (object) or legacy format (string)
+ * @param {string|object} item - Warehouse reference item
+ * @returns {boolean} True if object format (has name property)
+ */
+function isWarehouseObject(item) {
+  return typeof item === 'object' && item !== null && 'name' in item;
+}
+
+/**
+ * Get warehouse name from reference item (supports both object and string formats)
+ * @param {string|object} item - Warehouse reference item
+ * @returns {string} Warehouse name
+ */
+function getWarehouseName(item) {
+  return isWarehouseObject(item) ? item.name : item;
+}
+
+/**
+ * Extract warehouse names array from reference (supports both formats)
+ * @param {Array<string|object>} reference - Warehouse reference array
+ * @returns {Array<string>} Array of warehouse names
+ */
+function extractWarehouseNames(reference) {
+  if (!Array.isArray(reference)) {
+    return [];
+  }
+  return reference.map(getWarehouseName);
+}
+
+/**
  * Get warehouse reference array from Redis
  * If not exists, initializes with default list (can be changed later in Redis)
  * Always reads from Redis - you can update warehouses:reference in Redis anytime
- * @returns {Promise<Array<string>>} Warehouse reference array from Redis
+ * Supports both legacy format (array of strings) and new format (array of objects with lat/lng)
+ * @returns {Promise<Array<string|object>>} Warehouse reference array from Redis (objects with {name, lat, lng} or strings)
  */
 async function getWarehouseReferenceArray() {
   const reference = await getWarehouseReference();
@@ -74,22 +109,35 @@ async function getWarehouseReferenceArray() {
 }
 
 /**
+ * Get warehouse names array (for backward compatibility and matching)
+ * @returns {Promise<Array<string>>} Array of warehouse names only
+ */
+async function getWarehouseNamesArray() {
+  const reference = await getWarehouseReferenceArray();
+  return extractWarehouseNames(reference);
+}
+
+/**
  * Build availability array from warehouses with stock
  * Starts with zeros, sets index to 1 if warehouse has stock
  * Always returns array with length matching reference warehouses
- * @param {Array<string>} warehousesWithStock - Warehouses where item has stock
- * @param {Array<string>} referenceWarehouses - Reference warehouse array
+ * Supports both legacy format (string array) and new format (object array with lat/lng)
+ * @param {Array<string>} warehousesWithStock - Warehouses where item has stock (names only)
+ * @param {Array<string|object>} referenceWarehouses - Reference warehouse array (objects or strings)
  * @returns {Array<number>} Binary array [0,0,1,0,1] matching reference order
  */
 function buildAvailabilityArray(warehousesWithStock, referenceWarehouses) {
   // Start with all zeros - always match reference length
   const availabilityArray = new Array(referenceWarehouses.length).fill(0);
 
+  // Extract warehouse names from reference (handles both object and string formats)
+  const referenceNames = extractWarehouseNames(referenceWarehouses);
+
   // Set index to 1 if warehouse has stock
   // Use case-insensitive matching to handle slight variations
   warehousesWithStock.forEach((warehouse) => {
-    const index = referenceWarehouses.findIndex(
-      (ref) => ref.toLowerCase().trim() === warehouse.toLowerCase().trim()
+    const index = referenceNames.findIndex(
+      (refName) => refName.toLowerCase().trim() === warehouse.toLowerCase().trim()
     );
     if (index !== -1) {
       availabilityArray[index] = 1;
@@ -97,7 +145,7 @@ function buildAvailabilityArray(warehousesWithStock, referenceWarehouses) {
       // Log if warehouse from API doesn't match reference
       logger.warn('Warehouse from API not found in reference', {
         warehouse,
-        referenceWarehouses,
+        referenceNames,
       });
     }
   });
@@ -117,8 +165,9 @@ async function getItemAvailability(itemCode) {
 /**
  * Update availability for a single item
  * Fetches stock from ERPNext, builds availability array, and caches it
+ * Supports both legacy format (string array) and new format (object array with lat/lng)
  * @param {string} itemCode - The item code to update
- * @param {Array<string>} referenceWarehouses - Reference warehouse array
+ * @param {Array<string|object>} referenceWarehouses - Reference warehouse array (objects with {name, lat, lng} or strings)
  * @returns {Promise<Array<number>|null>} Availability array or null if failed
  */
 async function updateItemAvailability(itemCode, referenceWarehouses) {
@@ -342,7 +391,11 @@ module.exports = {
   updateItemAvailability,
   updateAllStock,
   getWarehouseReferenceArray,
+  getWarehouseNamesArray,
   buildAvailabilityArray,
+  extractWarehouseNames,
+  getWarehouseName,
+  isWarehouseObject,
   parseCustomVariant,
 };
 

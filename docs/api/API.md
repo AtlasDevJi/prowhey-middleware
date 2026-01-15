@@ -1305,7 +1305,24 @@ Get the warehouse reference array. This defines the order of warehouses used in 
 GET /api/stock/warehouses/reference
 ```
 
-**Response:**
+**Response (200 OK) - New Format (with coordinates):**
+```json
+{
+  "success": true,
+  "warehouses": [
+    {"name": "Idlib Store", "lat": 35.9333, "lng": 36.6333},
+    {"name": "Aleppo Store", "lat": 36.2021, "lng": 37.1343},
+    {"name": "Hama Store", "lat": 35.1318, "lng": 36.7578},
+    {"name": "Homs Store", "lat": 34.7268, "lng": 36.7234},
+    {"name": "Tartus Store", "lat": 34.8886, "lng": 35.8869},
+    {"name": "Latakia Store", "lat": 35.5241, "lng": 35.7874},
+    {"name": "Damascus Store", "lat": 33.5138, "lng": 36.2765}
+  ],
+  "count": 7
+}
+```
+
+**Response (200 OK) - Legacy Format (names only):**
 ```json
 {
   "success": true,
@@ -1326,10 +1343,12 @@ GET /api/stock/warehouses/reference
 - Store this array in your app
 - Use it to interpret availability arrays from stock endpoints
 - Each index in the availability array corresponds to the warehouse at that index in this reference
+- If warehouses have coordinates (`lat`, `lng`), you can use them to calculate distances and show warehouse locations on a map
 - Fetch once a month or when you detect a change in availability array length
+- The system supports both formats (objects with coordinates or strings) for backward compatibility
 
 **Example:**
-If availability array is `[0, 0, 1, 0, 1, 0, 0]` and warehouse reference is `["Idlib Store", "Aleppo Store", "Hama Store", "Homs Store", "Tartus Store", "Latakia Store", "Damascus Store"]`:
+If availability array is `[0, 0, 1, 0, 1, 0, 0]` and warehouse reference is `[{"name":"Idlib Store","lat":35.9333,"lng":36.6333}, {"name":"Aleppo Store","lat":36.2021,"lng":37.1343}, {"name":"Hama Store","lat":35.1318,"lng":36.7578}, ...]` (or legacy format: `["Idlib Store", "Aleppo Store", "Hama Store", ...]`):
 - Index 0 (Idlib Store): No stock (0)
 - Index 1 (Aleppo Store): No stock (0)
 - Index 2 (Hama Store): Stock available (1)
@@ -1455,7 +1474,7 @@ POST /api/stock/update-all
 |------------|---------|-------|
 | `availability:{itemCode}` | `availability:OL-EN-92-rng-1kg` | `[0,0,1,0,1,0,0]` (simple key for backward compatibility) |
 | `hash:stock:{itemCode}` | `hash:stock:OL-EN-92-rng-1kg` | Redis Hash with `data`, `data_hash`, `updated_at`, `version` |
-| `warehouses:reference` | `warehouses:reference` | `["Idlib Store","Aleppo Store",...]` |
+| `warehouses:reference` | `warehouses:reference` | `[{"name":"Idlib Store","lat":35.9333,"lng":36.6333},...]` or `["Idlib Store",...]` (legacy) |
 
 **Availability Array Format:**
 
@@ -1469,7 +1488,11 @@ The availability array is a binary array where:
 
 | Warehouse Reference | Availability Array | Meaning |
 |-------------------|-------------------|---------|
-| `["Idlib Store", "Aleppo Store", "Hama Store", "Homs Store", "Tartus Store", "Latakia Store", "Damascus Store"]` | `[0,0,1,0,1,0,0]` | Stock available in Hama Store (index 2) and Tartus Store (index 4) |
+| `[{"name":"Idlib Store","lat":35.9333,"lng":36.6333}, {"name":"Aleppo Store","lat":36.2021,"lng":37.1343}, {"name":"Hama Store","lat":35.1318,"lng":36.7578}, ...]` | `[0,0,1,0,1,0,0]` | Stock available in Hama Store (index 2) and Tartus Store (index 4) |
+
+**Note:** The warehouse reference supports both formats:
+- **New format**: Array of objects with `{name, lat, lng}` for geo coordinates
+- **Legacy format**: Array of strings (warehouse names only) - backward compatible
 
 **Stock Lookup:**
 - Fetches from ERPNext `Bin` doctype
@@ -1480,14 +1503,23 @@ The availability array is a binary array where:
 
 **Updating Warehouse Reference:**
 
-The warehouse reference array is stored in Redis and can be updated directly:
+The warehouse reference array is stored in Redis and can be updated directly. You can use either format:
 
+**New Format (with coordinates):**
 ```bash
-# Get current reference
-redis-cli GET warehouses:reference
+# Update with geo coordinates
+redis-cli SET warehouses:reference '[{"name":"Idlib Store","lat":35.9333,"lng":36.6333},{"name":"Aleppo Store","lat":36.2021,"lng":37.1343},{"name":"Hama Store","lat":35.1318,"lng":36.7578}]'
+```
 
-# Update reference (use exact warehouse names as they appear in ERPNext)
+**Legacy Format (names only - backward compatible):**
+```bash
+# Update with just names (no coordinates)
 redis-cli SET warehouses:reference '["Idlib Store","Aleppo Store","Hama Store","Homs Store","Tartus Store","Latakia Store","Damascus Store"]'
+```
+
+**Get current reference:**
+```bash
+redis-cli GET warehouses:reference
 ```
 
 **Important:** 

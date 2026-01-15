@@ -472,7 +472,20 @@ Checks for updates on low-frequency entities (products, prices, hero list, bundl
 ```
 
 **Warehouse Reference Example:**
+
+**New Format (with coordinates):**
 If the warehouse reference array is:
+```json
+[
+  {"name": "Idlib Store - P", "lat": 35.9333, "lng": 36.6333},
+  {"name": "Allepo Store - P", "lat": 36.2021, "lng": 37.1343},
+  {"name": "Homs Store - P", "lat": 34.7268, "lng": 36.7234},
+  {"name": "Hama Store - P", "lat": 35.1318, "lng": 36.7578},
+  {"name": "Latakia Store - P", "lat": 35.5241, "lng": 35.7874}
+]
+```
+
+**Legacy Format (names only - backward compatible):**
 ```json
 ["Idlib Store - P", "Allepo Store - P", "Homs Store - P", "Hama Store - P", "Latakia Store - P"]
 ```
@@ -494,6 +507,13 @@ redis-cli GET warehouses:reference
 ```
 
 **Update Reference:**
+
+**New Format (with coordinates):**
+```bash
+redis-cli SET warehouses:reference '[{"name":"Warehouse 1","lat":35.9333,"lng":36.6333},{"name":"Warehouse 2","lat":36.2021,"lng":37.1343},{"name":"Warehouse 3","lat":35.1318,"lng":36.7578}]'
+```
+
+**Legacy Format (names only - backward compatible):**
 ```bash
 redis-cli SET warehouses:reference '["Warehouse 1","Warehouse 2","Warehouse 3"]'
 ```

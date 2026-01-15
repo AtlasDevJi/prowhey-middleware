@@ -570,13 +570,18 @@ async function getStockAvailability(itemCode) {
       // Get warehouse reference
       const warehouses = await getWarehouseReference();
       
+      // Helper to get warehouse name (supports both object and string formats)
+      const getWarehouseName = (wh) => typeof wh === 'object' ? wh.name : wh;
+      
       // Map availability array to warehouse names
       const stockData = {
         itemCode: result.itemCode,
         availability: result.availability,
         warehouses: warehouses,
         stockByWarehouse: warehouses.map((warehouse, index) => ({
-          warehouse,
+          name: getWarehouseName(warehouse),
+          lat: typeof warehouse === 'object' ? warehouse.lat : null,
+          lng: typeof warehouse === 'object' ? warehouse.lng : null,
           available: result.availability[index] === 1
         }))
       };
