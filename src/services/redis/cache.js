@@ -176,6 +176,29 @@ async function deleteQueryCache(entityType, queryHash) {
 }
 
 /**
+ * Delete cached hash entity
+ * Removes both the hash key and the simple cache key
+ */
+async function deleteCacheHash(entityType, entityId) {
+  try {
+    const redis = getRedisClient();
+    const hashKey = `hash:${getCacheKey(entityType, entityId)}`;
+    const simpleKey = getCacheKey(entityType, entityId);
+    
+    // Delete both hash and simple cache
+    const results = await redis.del(hashKey, simpleKey);
+    return results > 0;
+  } catch (error) {
+    logger.error('Hash cache delete error', {
+      entityType,
+      entityId,
+      error: error.message,
+    });
+    return false;
+  }
+}
+
+/**
  * Check if cache exists
  */
 async function cacheExists(entityType, entityId) {
@@ -372,8 +395,10 @@ async function setCacheHash(entityType, entityId, data, metadata = {}) {
     // Set hash fields
     await redis.hset(cacheKey, hashFields);
 
-    // Set TTL on the hash key
-    await redis.expire(cacheKey, ttl);
+    // Set TTL on the hash key (only if TTL > 0, otherwise persistent)
+    if (ttl > 0) {
+      await redis.expire(cacheKey, ttl);
+    }
 
     return true;
   } catch (error) {
@@ -529,6 +554,7 @@ module.exports = {
   getCacheHashData,
   updateCacheHashMetadata,
   incrementCacheHashVersion,
+  deleteCacheHash,
 };
 
 

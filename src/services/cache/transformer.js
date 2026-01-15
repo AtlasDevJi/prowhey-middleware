@@ -193,6 +193,98 @@ async function transformQueryResults(entityType, erpnextData) {
   return transformed.filter((item) => item !== null);
 }
 
+/**
+ * Transform hero images from ERPNext File data
+ * Downloads images and converts to base64 data URLs
+ * @param {object} erpnextData - ERPNext response with file URLs
+ * @returns {Promise<object>} Transformed hero images object
+ */
+async function transformHeroImages(erpnextData) {
+  if (!erpnextData?.data) {
+    return { heroImages: [] };
+  }
+
+  const { downloadHeroImage } = require('../erpnext/client');
+  const heroImages = [];
+
+  // Process each file URL
+  for (const file of erpnextData.data) {
+    if (!file.file_url) {
+      continue;
+    }
+
+    // Download and convert to base64
+    const base64DataUrl = await downloadHeroImage(file.file_url);
+    if (base64DataUrl) {
+      heroImages.push(base64DataUrl);
+    } else {
+      logger.warn('Failed to download hero image, skipping', {
+        file_url: file.file_url,
+      });
+    }
+  }
+
+  return { heroImages };
+}
+
+/**
+ * Transform App Home data from ERPNext
+ * Parses JSON strings and selects latest if multiple
+ * @param {object} erpnextData - ERPNext App Home response
+ * @returns {Promise<object|null>} Transformed App Home object
+ */
+async function transformAppHome(erpnextData) {
+  if (!erpnextData?.data) {
+    return null;
+  }
+
+  // If multiple objects, select latest by modified timestamp
+  let data = erpnextData.data;
+  if (Array.isArray(data) && data.length > 1) {
+    data = data.reduce((prev, current) => {
+      const prevModified = new Date(prev.modified || prev.creation || 0);
+      const currentModified = new Date(current.modified || current.creation || 0);
+      return currentModified > prevModified ? current : prev;
+    });
+  } else if (Array.isArray(data)) {
+    data = data[0];
+  }
+
+  if (!data) {
+    return null;
+  }
+
+  // Parse JSON string fields
+  const parseJsonField = (fieldValue) => {
+    if (!fieldValue) {
+      return [];
+    }
+    try {
+      return JSON.parse(fieldValue);
+    } catch (error) {
+      logger.warn('Failed to parse JSON field in App Home', {
+        field: fieldValue,
+        error: error.message,
+      });
+      return [];
+    }
+  };
+
+  // Build transformed object
+  const transformed = {
+    top_sellers: parseJsonField(data.top_sellers),
+    new_arrivals: parseJsonField(data.new_arrivals),
+    most_viewed: parseJsonField(data.most_viewed),
+    top_offers: parseJsonField(data.top_offers),
+    html1: data.html1 || '',
+    html2: data.html2 || '',
+    html3: data.html3 || '',
+    modified: data.modified || data.creation || null,
+  };
+
+  return transformed;
+}
+
 module.exports = {
   transformProduct,
   transformQueryResults,
@@ -200,5 +292,7 @@ module.exports = {
   parseNutritionFacts,
   parseBenefits,
   fetchProductAnalytics,
+  transformHeroImages,
+  transformAppHome,
 };
 

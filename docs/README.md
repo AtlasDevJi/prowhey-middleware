@@ -9,6 +9,8 @@ This directory contains documentation for the Prowhey Middleware API.
 - **[API.md](./api/API.md)** - Complete API documentation with endpoints, request/response formats, and examples
 - **[SYNC_API.md](./api/SYNC_API.md)** - Detailed sync API documentation for frontend apps
 - **[ERPNEXT_WEBHOOKS.md](./api/ERPNEXT_WEBHOOKS.md)** - ERPNext webhook configuration guide for administrators
+- **[FRONTEND_INTEGRATION.md](./api/FRONTEND_INTEGRATION.md)** - Frontend integration guide for React Native developers
+- **[HOME_DATA_STRUCTURE.md](./api/HOME_DATA_STRUCTURE.md)** - Home data structure and extensibility guide
 
 ## Quick Links
 

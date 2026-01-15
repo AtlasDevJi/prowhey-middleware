@@ -116,6 +116,10 @@ app.use('/api/price', managementRateLimiter, priceRoutes);
 const stockRoutes = require('./routes/stock');
 app.use('/api/stock', managementRateLimiter, stockRoutes);
 
+// Home routes (hero images and App Home)
+const homeRoutes = require('./routes/home');
+app.use('/api', resourceRateLimiter, homeRoutes);
+
 // Webhook routes
 const webhookRoutes = require('./routes/webhooks');
 app.use('/api/webhooks', webhookRateLimiter, webhookRoutes);

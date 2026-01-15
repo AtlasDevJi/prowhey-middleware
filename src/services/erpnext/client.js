@@ -78,7 +78,13 @@ async function fetchProductQuery(queryString) {
   try {
     const client = createErpnextClient();
     const doctype = 'Website Item';
-    const url = `${doctype}?${queryString}`;
+    const encodedDoctype = encodeURIComponent(doctype);
+    
+    // Handle empty query string - fetch all items
+    // Format: /api/resource/Website Item or /api/resource/Website Item?filters=...
+    const url = queryString 
+      ? `/api/resource/${encodedDoctype}?${queryString}`
+      : `/api/resource/${encodedDoctype}`;
 
     const response = await client.get(url);
 
@@ -233,6 +239,163 @@ async function fetchItemStock(itemCode) {
   }
 }
 
+/**
+ * Download hero image from URL and convert to base64 data URL
+ * @param {string} imageUrl - Image URL (can be relative or absolute)
+ * @returns {Promise<string|null>} Base64 data URL or null if download fails
+ */
+async function downloadHeroImage(imageUrl) {
+  try {
+    const client = createErpnextClient();
+    
+    // If URL is relative, prepend ERPNext base URL
+    let fullUrl = imageUrl;
+    if (!imageUrl.startsWith('http://') && !imageUrl.startsWith('https://')) {
+      const baseURL = ERPNEXT_API_URL.replace(/\/$/, '');
+      fullUrl = `${baseURL}${imageUrl.startsWith('/') ? '' : '/'}${imageUrl}`;
+    }
+
+    // Download image as arraybuffer
+    const response = await axios.get(fullUrl, {
+      responseType: 'arraybuffer',
+      headers: {
+        Authorization: `Basic ${Buffer.from(`${ERPNEXT_API_KEY}:${ERPNEXT_API_SECRET}`).toString('base64')}`,
+      },
+      timeout: 10000,
+    });
+
+    // Determine content type from response headers or URL extension
+    let contentType = response.headers['content-type'] || 'image/jpeg';
+    if (!contentType.startsWith('image/')) {
+      // Fallback: try to determine from URL extension
+      const ext = imageUrl.split('.').pop()?.toLowerCase();
+      const mimeTypes = {
+        jpg: 'image/jpeg',
+        jpeg: 'image/jpeg',
+        png: 'image/png',
+        gif: 'image/gif',
+        webp: 'image/webp',
+      };
+      contentType = mimeTypes[ext] || 'image/jpeg';
+    }
+
+    // Convert to base64
+    const base64 = Buffer.from(response.data).toString('base64');
+    return `data:${contentType};base64,${base64}`;
+  } catch (error) {
+    logger.error('Failed to download hero image', {
+      imageUrl,
+      error: error.message,
+      status: error.response?.status,
+    });
+    return null;
+  }
+}
+
+/**
+ * Fetch hero images from ERPNext File doctype
+ * Returns array of file URLs
+ * @returns {Promise<Array<string>>} Array of file URLs
+ */
+async function fetchHeroImages() {
+  try {
+    const client = createErpnextClient();
+    const doctype = 'File';
+
+    const fields = ['file_url'];
+    const filters = [['is_hero', '=', 1]];
+    const limit = 10;
+
+    const encodedDoctype = encodeURIComponent(doctype);
+    const filtersStr = encodeURIComponent(JSON.stringify(filters));
+    const fieldsStr = encodeURIComponent(JSON.stringify(fields));
+    
+    const url = `/api/resource/${encodedDoctype}?filters=${filtersStr}&fields=${fieldsStr}&limit=${limit}`;
+    
+    logger.info('Fetching hero images', { url });
+    
+    const response = await client.get(url);
+
+    if (!response.data || !response.data.data) {
+      logger.warn('No hero images returned from ERPNext', {
+        responseData: response.data,
+      });
+      return [];
+    }
+
+    // Extract file_url from response
+    const fileUrls = response.data.data
+      .map((file) => file.file_url)
+      .filter((url) => url); // Filter out null/undefined URLs
+
+    logger.info('Fetched hero images', {
+      count: fileUrls.length,
+    });
+
+    return fileUrls;
+  } catch (error) {
+    logger.error('Failed to fetch hero images from ERPNext', {
+      error: error.message,
+      status: error.response?.status,
+      responseData: error.response?.data,
+    });
+    return [];
+  }
+}
+
+/**
+ * Fetch App Home data from ERPNext App Home doctype
+ * Returns single object (latest if multiple)
+ * @returns {Promise<object|null>} App Home object or null if not found
+ */
+async function fetchAppHome() {
+  try {
+    const client = createErpnextClient();
+    const doctype = 'App Home';
+
+    const encodedDoctype = encodeURIComponent(doctype);
+    const fieldsStr = encodeURIComponent(JSON.stringify(['*']));
+    
+    const url = `/api/resource/${encodedDoctype}?fields=${fieldsStr}`;
+    
+    logger.info('Fetching App Home data', { url });
+    
+    const response = await client.get(url);
+
+    if (!response.data || !response.data.data || response.data.data.length === 0) {
+      logger.warn('No App Home data returned from ERPNext', {
+        responseData: response.data,
+      });
+      return null;
+    }
+
+    // If multiple objects, select latest by modified timestamp
+    let latest = response.data.data[0];
+    if (response.data.data.length > 1) {
+      latest = response.data.data.reduce((prev, current) => {
+        const prevModified = new Date(prev.modified || prev.creation || 0);
+        const currentModified = new Date(current.modified || current.creation || 0);
+        return currentModified > prevModified ? current : prev;
+      });
+    }
+
+    logger.info('Fetched App Home data', {
+      name: latest.name,
+      modified: latest.modified,
+      totalCount: response.data.data.length,
+    });
+
+    return latest;
+  } catch (error) {
+    logger.error('Failed to fetch App Home from ERPNext', {
+      error: error.message,
+      status: error.response?.status,
+      responseData: error.response?.data,
+    });
+    return null;
+  }
+}
+
 module.exports = {
   createErpnextClient,
   fetchProduct,
@@ -240,5 +403,8 @@ module.exports = {
   fetchProductRaw,
   fetchPublishedWebsiteItems,
   fetchItemStock,
+  downloadHeroImage,
+  fetchHeroImages,
+  fetchAppHome,
 };
 

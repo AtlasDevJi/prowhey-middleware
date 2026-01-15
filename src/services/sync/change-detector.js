@@ -85,13 +85,50 @@ async function filterEntriesNeedingSync(streamEntries) {
 /**
  * Get entity data for sync response
  * Fetches cached entity data and includes metadata
+ * If entity is deleted (hash indicates deletion), returns deletion marker
  * @param {string} entityType - Entity type
  * @param {string} entityId - Entity ID
- * @returns {Promise<object|null>} Entity data object with metadata or null if not found
+ * @param {string} streamDataHash - Data hash from stream entry (to detect deletions)
+ * @returns {Promise<object|null>} Entity data object with metadata, deletion marker, or null if not found
  */
-async function getEntityForSync(entityType, entityId) {
+async function getEntityForSync(entityType, entityId, streamDataHash = null) {
   try {
     const cached = await getCacheHash(entityType, entityId);
+
+    // Check if this is a deletion marker (hash indicates deletion)
+    if (streamDataHash) {
+      const deletionMarker = { deleted: true, erpnext_name: entityId };
+      const deletionHash = require('./hash-computer').computeDataHash(deletionMarker);
+      
+      if (streamDataHash === deletionHash) {
+        // This is a deletion - return deletion marker
+        return {
+          entity_type: entityType,
+          entity_id: entityId,
+          deleted: true,
+          updated_at: Date.now().toString(),
+          version: cached?.version || '1',
+          data_hash: streamDataHash,
+        };
+      }
+    }
+
+    // If cache doesn't exist and we have a stream entry, it might be a deletion
+    if (!cached && streamDataHash) {
+      const deletionMarker = { deleted: true, erpnext_name: entityId };
+      const deletionHash = require('./hash-computer').computeDataHash(deletionMarker);
+      
+      if (streamDataHash === deletionHash) {
+        return {
+          entity_type: entityType,
+          entity_id: entityId,
+          deleted: true,
+          updated_at: Date.now().toString(),
+          version: '1',
+          data_hash: streamDataHash,
+        };
+      }
+    }
 
     if (!cached) {
       return null;

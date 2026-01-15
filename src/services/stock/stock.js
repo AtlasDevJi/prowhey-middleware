@@ -163,21 +163,21 @@ async function updateItemAvailability(itemCode, referenceWarehouses) {
       }
     }
 
-    // Cache the availability array (backward compatibility)
-    const success = await setStockAvailability(itemCode, availabilityArray);
-
-    if (!success) {
-      logger.error('Failed to cache item availability', { itemCode });
-      return null;
-    }
-
-    // Update cache hash with metadata
+    // Update cache hash with metadata (primary storage for sync)
     const updatedAt = Date.now().toString();
-    await setCacheHash('stock', itemCode, stockData, {
+    const hashSuccess = await setCacheHash('stock', itemCode, stockData, {
       data_hash: newHash,
       updated_at: updatedAt,
       version,
     });
+
+    if (!hashSuccess) {
+      logger.error('Failed to cache item availability hash', { itemCode });
+      return null;
+    }
+
+    // Also cache as simple key for backward compatibility
+    await setStockAvailability(itemCode, availabilityArray);
 
     // Add stream entry if changed
     if (changed) {

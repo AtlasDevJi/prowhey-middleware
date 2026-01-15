@@ -8,7 +8,7 @@ const { logger } = require('../logger');
 const ENTITY_FREQUENCIES = {
   fast: ['view', 'comment', 'user'], // High-frequency (5-15 min)
   medium: ['stock', 'notification', 'announcement'], // Medium-frequency (hourly)
-  slow: ['product', 'price', 'hero'], // Low-frequency (daily or on-demand)
+  slow: ['product', 'price', 'hero', 'home'], // Low-frequency (daily or on-demand)
 };
 
 /**
@@ -58,10 +58,10 @@ async function processSync(lastSync = {}, entityTypes = null, limit = 100) {
 
       // Get entity data for each entry that needs sync
       for (const entry of entriesNeedingSync) {
-        const { entity_id, idempotency_key } = entry.fields;
+        const { entity_id, idempotency_key, data_hash } = entry.fields;
 
-        // Get entity data from cache
-        const entityData = await getEntityForSync(entityType, entity_id);
+        // Get entity data from cache (pass data_hash to detect deletions)
+        const entityData = await getEntityForSync(entityType, entity_id, data_hash);
 
         if (entityData) {
           updates.push({

@@ -2,6 +2,65 @@
 
 This document defines the API endpoints for syncing data between the middleware and the React Native frontend app. The sync system uses Redis Streams to track changes and only returns updates when data has actually changed.
 
+## Product Deletion Handling
+
+### Automatic Deletion Detection
+
+The middleware automatically detects when products are deleted or unpublished in ERPNext:
+
+1. **Detection Method:** When fetching all products (e.g., via `GET /api/resource/Website Item`), the middleware compares products in Redis cache with products returned from ERPNext
+2. **Deletion Process:**
+   - Products that exist in Redis but not in ERPNext are marked as deleted
+   - A deletion marker entry is added to the `product_changes` stream
+   - The product is removed from Redis cache
+   - Query caches are invalidated
+
+### Deletion Marker Format
+
+Deletion markers are included in sync responses with the following structure:
+
+```json
+{
+  "entity_type": "product",
+  "entity_id": "WEB-ITM-0001",
+  "deleted": true,
+  "updated_at": "1768469419660",
+  "version": "2",
+  "data_hash": "deletion_hash_here",
+  "idempotency_key": "uuid-here"
+}
+```
+
+**Key Fields:**
+- `deleted: true` - **Required** - Indicates this is a deletion marker (not an update)
+- `entity_id` - The product ID that was deleted
+- `entity_type` - Always `"product"` for product deletions
+- `data_hash` - Special hash indicating deletion (computed from `{deleted: true, erpnext_name: entity_id}`)
+- `version` - Incremented version number
+- `updated_at` - Timestamp when deletion was detected
+
+**Note:** Deletion markers do **not** include a `data` field since the product no longer exists.
+
+### Frontend Handling
+
+When your app receives a deletion marker:
+
+1. **Remove from local cache** - Delete the cached product data
+2. **Remove from UI lists** - Remove the product from any displayed lists (home page, search results, favorites, etc.)
+3. **Handle active views** - If the user is currently viewing the deleted product, show a "Product no longer available" message
+4. **Update cached lists** - Remove the product ID from any cached product lists (top_sellers, new_arrivals, etc.)
+
+See [FRONTEND_INTEGRATION.md](./FRONTEND_INTEGRATION.md#handling-deletion-markers) for implementation examples.
+
+### Preventing Duplicate Deletions
+
+The middleware prevents duplicate deletion entries by:
+- Checking recent stream entries before adding a new deletion marker
+- Tracking processed deletions within the same request
+- Only adding one deletion entry per product
+
+---
+
 ## Data Sync Strategy
 
 **Important Principle:** All entity data (stock availability, comments, ratings, etc.) should follow a **detail-page-driven caching strategy**:
@@ -97,6 +156,15 @@ Checks for updates across all entity types (or filtered by `entityTypes`).
       "version": "1",
       "data_hash": "df8c01bca06b5f0ac48a5b35d8c6cc78b78eb4c03ae41f5915eff88ecd169e33",
       "idempotency_key": "742ba7b1-8665-4a93-8f7f-28bdd7465c41"
+    },
+    {
+      "entity_type": "product",
+      "entity_id": "WEB-ITM-0001",
+      "deleted": true,
+      "updated_at": "1768469419660",
+      "version": "2",
+      "data_hash": "deletion_hash_here",
+      "idempotency_key": "another-uuid-here"
     }
   ],
   "lastIds": {
@@ -384,6 +452,105 @@ redis-cli SET warehouses:reference '["Warehouse 1","Warehouse 2","Warehouse 3"]'
 - Each item code has its own stock availability (different flavors of the same product have different item codes)
 - The availability array is computed on-demand when webhooks are triggered or during full refresh
 - Stock updates are included in medium-frequency sync (`/api/sync/check-medium`)
+
+---
+
+### Hero
+
+**Entity Type:** `hero`
+
+**Entity ID:** `hero` (single entity, no ID needed)
+
+**Data Structure:**
+```typescript
+{
+  heroImages: Array<string>; // Array of base64-encoded data URLs
+}
+```
+
+**Hero Images Format:**
+- Each image is a base64-encoded data URL
+- Format: `data:image/{type};base64,{base64data}`
+- Images are downloaded from ERPNext File doctype (where `is_hero = 1`)
+- Images are cached as base64 data, not URLs
+- Ready for direct display in the app (no additional download needed)
+
+**Example Hero Update:**
+```json
+{
+  "entity_type": "hero",
+  "entity_id": "hero",
+  "data": {
+    "heroImages": [
+      "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQEAYABgAAD...",
+      "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAA..."
+    ]
+  },
+  "updated_at": "1768469419659",
+  "version": "1",
+  "data_hash": "a1b2c3d4e5f6...",
+  "idempotency_key": "uuid-123-456"
+}
+```
+
+**Notes:**
+- Hero images are fetched from ERPNext File doctype with filter `is_hero = 1`
+- Images are downloaded and converted to base64 during transformation
+- Hero updates are included in slow-frequency sync (`/api/sync/check-slow`)
+- Follow detail-page-driven caching strategy (fetch only when home page opens)
+
+---
+
+### Home
+
+**Entity Type:** `home`
+
+**Entity ID:** `home` (single entity, no ID needed)
+
+**Data Structure:**
+```typescript
+{
+  top_sellers: Array<string>;    // Array of item codes
+  new_arrivals: Array<string>;   // Array of item codes
+  most_viewed: Array<string>;    // Array of item codes
+  top_offers: Array<string>;       // Array of item codes
+  html1: string;                  // HTML content for section 1
+  html2: string;                  // HTML content for section 2
+  html3: string;                  // HTML content for section 3
+  modified: string;               // Timestamp of last modification
+}
+```
+
+**Example Home Update:**
+```json
+{
+  "entity_type": "home",
+  "entity_id": "home",
+  "data": {
+    "top_sellers": ["OL-PC-91-vnl-1800g", "OL-PC-91-vnl-1800g"],
+    "new_arrivals": ["OL-PC-91-vnl-1800g", "OL-PC-91-vnl-1800g"],
+    "most_viewed": ["OL-PC-91-vnl-1800g", "OL-PC-91-vnl-1800g"],
+    "top_offers": ["OL-PC-91-vnl-1800g", "OL-PC-91-vnl-1800g"],
+    "html1": "<h1> HTML 1</h1>",
+    "html2": "<h1> HTML 2</h1>",
+    "html3": "<h1> HTML 3</h1>",
+    "modified": "2026-01-15 15:19:15.688817"
+  },
+  "updated_at": "1768469419659",
+  "version": "1",
+  "data_hash": "a1b2c3d4e5f6...",
+  "idempotency_key": "uuid-123-456"
+}
+```
+
+**Notes:**
+- App Home data is fetched from ERPNext App Home doctype
+- If multiple App Home records exist, the latest one (by `modified` timestamp) is selected
+- JSON string fields (`top_sellers`, `new_arrivals`, etc.) are parsed into arrays
+- HTML fields (`html1`, `html2`, `html3`) are included as strings
+- Home updates are included in slow-frequency sync (`/api/sync/check-slow`)
+- Follow detail-page-driven caching strategy (fetch only when home page opens)
+- See [HOME_DATA_STRUCTURE.md](./HOME_DATA_STRUCTURE.md) for details on adding new fields
 
 ---
 

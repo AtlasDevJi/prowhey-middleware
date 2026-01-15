@@ -7,6 +7,8 @@ This document provides instructions for configuring ERPNext to send webhooks to 
 The middleware provides a unified webhook endpoint that ERPNext can call to notify about changes to:
 - **Products** (Website Items)
 - **Stock Availability** (Item stock levels)
+- **Hero Images** (File doctype with is_hero=1)
+- **App Home** (App Home doctype)
 
 When ERPNext sends a webhook, the middleware:
 1. Fetches the latest data from ERPNext
@@ -47,6 +49,8 @@ Trigger this webhook when a **Website Item** is created, updated, or published/u
 - Website Item fields are modified (name, description, images, variants, etc.)
 - Website Item is published or unpublished
 - Website Item is deleted (optional - middleware will handle gracefully)
+
+**Note:** If a Website Item is unpublished or deleted in ERPNext, the middleware will automatically detect it when fetching all products (e.g., via the query endpoint). You don't need to send a webhook for deletions - the middleware handles them automatically. However, if you want immediate deletion detection, you can still send a webhook (the middleware will handle it gracefully if the product doesn't exist).
 
 ### Request Format
 
@@ -351,6 +355,226 @@ Same as Product Update Webhook (see above).
 
 ---
 
+## 3. Hero Images Webhook
+
+Trigger this webhook when a **File** with `is_hero = 1` is created, updated, or when the `is_hero` field changes in ERPNext.
+
+### When to Trigger
+
+- File is created with `is_hero = 1`
+- File's `is_hero` field is changed (from 0 to 1, or 1 to 0)
+- File with `is_hero = 1` is updated
+- File with `is_hero = 1` is deleted (optional - middleware will handle gracefully)
+
+### Request Format
+
+**Method:** `POST`
+
+**URL:** `{BASE_URL}/api/webhooks/erpnext`
+
+**Headers:**
+```
+Content-Type: application/json
+```
+
+**Request Body:**
+```json
+{
+  "entity_type": "hero"
+}
+```
+
+### Field Descriptions
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `entity_type` | string | Yes | Must be `"hero"` |
+
+**Note:** No additional fields are required. The webhook just triggers the middleware to fetch all hero images from ERPNext.
+
+### Example: ERPNext Webhook Configuration
+
+**Webhook Name:** `Hero Images Update`
+
+**Request URL:** `https://your-domain.com/api/webhooks/erpnext`
+
+**Request Method:** `POST`
+
+**Request Headers:**
+```
+Content-Type: application/json
+```
+
+**Request Body (Jinja Template):**
+```json
+{
+  "entity_type": "hero"
+}
+```
+
+**Webhook Conditions:**
+- **DocType:** `File`
+- **Trigger:** `on_update` (or `after_insert`, `on_submit`, etc.)
+- **Optional Condition:** `doc.is_hero == 1` (only trigger when is_hero is set)
+
+### Response Format
+
+**Success Response (Data Changed):**
+```json
+{
+  "success": true,
+  "message": "hero webhook processed successfully",
+  "changed": true,
+  "version": "2",
+  "streamId": "1768469419663-0",
+  "entity_type": "hero"
+}
+```
+
+**Success Response (No Change Detected):**
+```json
+{
+  "success": true,
+  "message": "hero webhook processed successfully",
+  "changed": false,
+  "version": "1",
+  "streamId": null,
+  "entity_type": "hero"
+}
+```
+
+### What Happens Behind the Scenes
+
+1. Middleware receives webhook with `entity_type: "hero"`
+2. Fetches all hero images from ERPNext File API: `/api/resource/File?filters=[["is_hero", "=", 1]]&limit=10`
+3. Downloads each image from its URL
+4. Converts images to base64 data URLs
+5. Computes SHA-256 hash of the image data array
+6. Compares hash with cached data
+7. If hash differs:
+   - Updates Redis cache with new image data
+   - Increments version number
+   - Adds entry to `hero_changes` stream
+   - Returns `changed: true` with `streamId`
+8. If hash matches:
+   - Skips update (no change)
+   - Returns `changed: false` with `streamId: null`
+
+---
+
+## 4. App Home Webhook
+
+Trigger this webhook when an **App Home** record is created, updated, or submitted in ERPNext.
+
+### When to Trigger
+
+- App Home record is created
+- App Home fields are modified (top_sellers, new_arrivals, most_viewed, top_offers, html1-3, etc.)
+- App Home record is submitted
+- App Home record is deleted (optional - middleware will handle gracefully)
+
+### Request Format
+
+**Method:** `POST`
+
+**URL:** `{BASE_URL}/api/webhooks/erpnext`
+
+**Headers:**
+```
+Content-Type: application/json
+```
+
+**Request Body:**
+```json
+{
+  "entity_type": "home"
+}
+```
+
+### Field Descriptions
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `entity_type` | string | Yes | Must be `"home"` |
+
+**Note:** No additional fields are required. The webhook just triggers the middleware to fetch App Home data from ERPNext. If multiple App Home records exist, the middleware will automatically select the latest one (by `modified` timestamp).
+
+### Example: ERPNext Webhook Configuration
+
+**Webhook Name:** `App Home Update`
+
+**Request URL:** `https://your-domain.com/api/webhooks/erpnext`
+
+**Request Method:** `POST`
+
+**Request Headers:**
+```
+Content-Type: application/json
+```
+
+**Request Body (Jinja Template):**
+```json
+{
+  "entity_type": "home"
+}
+```
+
+**Webhook Conditions:**
+- **DocType:** `App Home`
+- **Trigger:** `on_submit` or `on_update`
+
+### Response Format
+
+**Success Response (Data Changed):**
+```json
+{
+  "success": true,
+  "message": "home webhook processed successfully",
+  "changed": true,
+  "version": "2",
+  "streamId": "1768469419664-0",
+  "entity_type": "home"
+}
+```
+
+**Success Response (No Change Detected):**
+```json
+{
+  "success": true,
+  "message": "home webhook processed successfully",
+  "changed": false,
+  "version": "1",
+  "streamId": null,
+  "entity_type": "home"
+}
+```
+
+### What Happens Behind the Scenes
+
+1. Middleware receives webhook with `entity_type: "home"`
+2. Fetches App Home data from ERPNext API: `/api/resource/App Home?fields=["*"]`
+3. If multiple App Home records exist, selects the latest one by `modified` timestamp
+4. Parses JSON string fields: `top_sellers`, `new_arrivals`, `most_viewed`, `top_offers`
+5. Includes HTML fields: `html1`, `html2`, `html3`
+6. Computes SHA-256 hash of the transformed data
+7. Compares hash with cached data
+8. If hash differs:
+   - Updates Redis cache with new data
+   - Increments version number
+   - Adds entry to `home_changes` stream
+   - Returns `changed: true` with `streamId`
+9. If hash matches:
+   - Skips update (no change)
+   - Returns `changed: false` with `streamId: null`
+
+### Important Notes
+
+- **Multiple Records:** If multiple App Home records exist, the middleware automatically selects the latest one (by `modified` timestamp). You don't need to worry about which record to update.
+- **JSON Parsing:** Fields like `top_sellers`, `new_arrivals`, etc. are stored as JSON strings in ERPNext but are automatically parsed into arrays by the middleware.
+- **Adding Fields:** To add new fields to App Home, see [HOME_DATA_STRUCTURE.md](./HOME_DATA_STRUCTURE.md) for instructions.
+
+---
+
 ## Error Handling
 
 ### Common Error Responses
@@ -389,6 +613,8 @@ ERPNext webhooks have built-in retry mechanisms. If a webhook fails:
 
 - **Product Updates:** Trigger on `on_submit` or `on_update` to ensure data is finalized
 - **Stock Updates:** Trigger on `on_submit` to ensure stock transactions are committed
+- **Hero Images:** Trigger on `on_update` when `is_hero` field changes
+- **App Home:** Trigger on `on_submit` or `on_update` to ensure data is finalized
 
 ### 2. Avoiding Duplicate Webhooks
 
@@ -421,7 +647,7 @@ ERPNext webhooks have built-in retry mechanisms. If a webhook fails:
 - [ ] Set Request Method to `POST`
 - [ ] Add `Content-Type: application/json` header
 - [ ] Configure Request Body with correct Jinja template
-- [ ] Set appropriate DocType (Website Item, Stock Entry, etc.)
+- [ ] Set appropriate DocType (Website Item, Stock Entry, File, App Home, etc.)
 - [ ] Set appropriate Trigger (on_submit, on_update, etc.)
 - [ ] Test webhook using ERPNext's "Test" button
 - [ ] Verify webhook appears in ERPNext webhook logs
@@ -483,5 +709,7 @@ For issues or questions:
 ## Related Documentation
 
 - [Sync API Documentation](./SYNC_API.md) - How frontend apps consume sync updates
+- [Frontend Integration Guide](./FRONTEND_INTEGRATION.md) - React Native integration guide for frontend developers
 - [API Documentation](./API.md) - Complete API reference
-- [Local Webhook Testing](./LOCAL_WEBHOOK_TESTING.md) - Testing webhooks locally
+- [Home Data Structure](./HOME_DATA_STRUCTURE.md) - App Home data structure and extensibility guide
+- [Local Webhook Testing](../LOCAL_WEBHOOK_TESTING.md) - Testing webhooks locally

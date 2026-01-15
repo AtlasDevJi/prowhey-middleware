@@ -5,8 +5,8 @@ const {
   getCacheHash,
   incrementCacheHashVersion,
 } = require('../redis/cache');
-const { fetchPublishedWebsiteItems, fetchProduct, fetchItemStock } = require('../erpnext/client');
-const { transformProduct } = require('../cache/transformer');
+const { fetchPublishedWebsiteItems, fetchProduct, fetchItemStock, fetchHeroImages, fetchAppHome } = require('../erpnext/client');
+const { transformProduct, transformHeroImages, transformAppHome } = require('../cache/transformer');
 const { fetchItemPrice } = require('../price/price');
 const { getWarehouseReferenceArray, buildAvailabilityArray } = require('../stock/stock');
 const { logger } = require('../logger');
@@ -77,13 +77,17 @@ async function refreshAllProducts() {
 
         changed = true;
 
-        // Update cache
+        // Update cache hash (primary storage for sync)
         const updatedAt = Date.now().toString();
         await setCacheHash('product', erpnextName, transformedData, {
           data_hash: newHash,
           updated_at: updatedAt,
           version,
         });
+
+        // Also update simple cache for backward compatibility
+        const { setCache } = require('../redis/cache');
+        await setCache('product', erpnextName, transformedData);
 
         // Add stream entry only if changed
         await addStreamEntry('product', erpnextName, newHash, version);
@@ -443,6 +447,170 @@ async function refreshAllStock() {
 }
 
 /**
+ * Refresh all hero images
+ * Fetches hero images from ERPNext, downloads and converts to base64, compares hashes, updates cache and streams only if changed
+ * @returns {Promise<object>} Summary object
+ */
+async function refreshAllHero() {
+  const summary = {
+    updated: 0,
+    unchanged: 0,
+    errors: [],
+  };
+
+  try {
+    const entityId = 'hero';
+
+    logger.info('Starting full hero refresh');
+
+    // Fetch hero images from ERPNext
+    const fileUrls = await fetchHeroImages();
+
+    if (!fileUrls || fileUrls.length === 0) {
+      logger.warn('No hero images found in ERPNext');
+      return summary;
+    }
+
+    // Wrap in ERPNext response format for transformer
+    const erpnextData = {
+      data: fileUrls.map((url) => ({ file_url: url })),
+    };
+
+    // Transform (downloads images and converts to base64)
+    const transformedData = await transformHeroImages(erpnextData);
+
+    // Compute hash
+    const newHash = computeDataHash(transformedData);
+
+    // Get existing cache
+    const existing = await getCacheHash('hero', entityId);
+
+    // Check if changed
+    if (existing && existing.data_hash === newHash) {
+      summary.unchanged = 1;
+      logger.info('Hero refresh: no change detected');
+      return summary;
+    }
+
+    // Update cache
+    const updatedAt = Date.now().toString();
+    let version = '1';
+    if (existing) {
+      version = await incrementCacheHashVersion('hero', entityId);
+      if (!version) {
+        version = (parseInt(existing.version) + 1).toString();
+      }
+    }
+
+    const success = await setCacheHash('hero', entityId, transformedData, {
+      data_hash: newHash,
+      updated_at: updatedAt,
+      version,
+    });
+
+    if (!success) {
+      throw new Error('Failed to update hero cache');
+    }
+
+    // Add stream entry only if changed
+    await addStreamEntry('hero', entityId, newHash, version);
+
+    summary.updated = 1;
+    logger.info('Hero refresh completed', summary);
+    return summary;
+  } catch (error) {
+    logger.error('Full hero refresh failed', {
+      error: error.message,
+    });
+    summary.errors.push({ error: error.message });
+    return summary;
+  }
+}
+
+/**
+ * Refresh all App Home data
+ * Fetches App Home from ERPNext, transforms, compares hashes, updates cache and streams only if changed
+ * @returns {Promise<object>} Summary object
+ */
+async function refreshAllHome() {
+  const summary = {
+    updated: 0,
+    unchanged: 0,
+    errors: [],
+  };
+
+  try {
+    const entityId = 'home';
+
+    logger.info('Starting full home refresh');
+
+    // Fetch App Home from ERPNext
+    const appHomeData = await fetchAppHome();
+
+    if (!appHomeData) {
+      logger.warn('App Home not found in ERPNext');
+      return summary;
+    }
+
+    // Wrap in ERPNext response format for transformer
+    const erpnextData = { data: appHomeData };
+
+    // Transform (parses JSON strings)
+    const transformedData = await transformAppHome(erpnextData);
+
+    if (!transformedData) {
+      throw new Error('Failed to transform App Home data');
+    }
+
+    // Compute hash
+    const newHash = computeDataHash(transformedData);
+
+    // Get existing cache
+    const existing = await getCacheHash('home', entityId);
+
+    // Check if changed
+    if (existing && existing.data_hash === newHash) {
+      summary.unchanged = 1;
+      logger.info('Home refresh: no change detected');
+      return summary;
+    }
+
+    // Update cache
+    const updatedAt = Date.now().toString();
+    let version = '1';
+    if (existing) {
+      version = await incrementCacheHashVersion('home', entityId);
+      if (!version) {
+        version = (parseInt(existing.version) + 1).toString();
+      }
+    }
+
+    const success = await setCacheHash('home', entityId, transformedData, {
+      data_hash: newHash,
+      updated_at: updatedAt,
+      version,
+    });
+
+    if (!success) {
+      throw new Error('Failed to update home cache');
+    }
+
+    // Add stream entry only if changed
+    await addStreamEntry('home', entityId, newHash, version);
+
+    summary.updated = 1;
+    logger.info('Home refresh completed', summary);
+    return summary;
+  } catch (error) {
+    logger.error('Full home refresh failed', {
+      error: error.message,
+    });
+    summary.errors.push({ error: error.message });
+    return summary;
+  }
+}
+
+/**
  * Perform full refresh of all entity types
  * Only adds stream entries if hash differences detected
  * @returns {Promise<object>} Combined summary
@@ -450,16 +618,20 @@ async function refreshAllStock() {
 async function performFullRefresh() {
   logger.info('Starting full refresh of all entities');
 
-  const [productsSummary, pricesSummary, stockSummary] = await Promise.all([
+  const [productsSummary, pricesSummary, stockSummary, heroSummary, homeSummary] = await Promise.all([
     refreshAllProducts(),
     refreshAllPrices(),
     refreshAllStock(),
+    refreshAllHero(),
+    refreshAllHome(),
   ]);
 
   const combinedSummary = {
     products: productsSummary,
     prices: pricesSummary,
     stock: stockSummary,
+    hero: heroSummary,
+    home: homeSummary,
     timestamp: new Date().toISOString(),
   };
 
@@ -471,5 +643,7 @@ module.exports = {
   refreshAllProducts,
   refreshAllPrices,
   refreshAllStock,
+  refreshAllHero,
+  refreshAllHome,
   performFullRefresh,
 };

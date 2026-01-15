@@ -11,6 +11,7 @@
 - [Stock Management](#stock-management)
 - [Webhooks](#webhooks) - See [ERPNEXT_WEBHOOKS.md](./ERPNEXT_WEBHOOKS.md) for ERPNext webhook configuration guide
 - [Sync API](#sync-api) - See [SYNC_API.md](./SYNC_API.md) for detailed sync endpoint documentation
+- [Frontend Integration](#frontend-integration) - See [FRONTEND_INTEGRATION.md](./FRONTEND_INTEGRATION.md) for React Native integration guide
 - [Error Handling](#error-handling)
 - [Caching Strategy](#caching-strategy)
 - [Examples](#examples)
@@ -1508,6 +1509,150 @@ The bulk stock snapshot runs automatically every week (default: Saturday at 6 AM
 
 ---
 
+## Home Page Data
+
+### Data Sync Strategy
+
+**Important:** Home page data (hero images and App Home content) should follow a **detail-page-driven caching strategy**:
+
+1. **Fetch Only on Home Page Access**: Only fetch home page data when a user opens the home page
+2. **Respect Refresh Rate**: Implement a refresh rate (e.g., 1 hour) to prevent excessive API calls
+   - Cache the data in the app with a timestamp
+   - Only fetch from API if cache is older than the refresh rate
+3. **Server-Side Caching**: Home page data accessed is cached in Redis and served to all users
+   - First user to open the home page triggers the fetch and caches it
+   - Subsequent users get the cached data until refresh rate expires
+4. **No Background Updates**: Home page data should **not** be updated automatically unless accessed
+
+---
+
+### Get Hero Images
+
+**Endpoint:** `GET /api/hero`
+
+Get hero images for the home page. Returns array of base64-encoded image data URLs.
+
+**Example Request:**
+```bash
+GET /api/hero
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "heroImages": [
+    "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQEAYABgAAD...",
+    "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAA..."
+  ]
+}
+```
+
+**Hero Images Format:**
+- Each image is a base64-encoded data URL
+- Format: `data:image/{type};base64,{base64data}`
+- Images are downloaded from ERPNext and cached as base64 data
+- Ready for direct display in the app (no additional download needed)
+
+**Usage:** Call this endpoint only when a user opens the home page, and only if the app's cached data is older than your refresh rate (e.g., 1 hour).
+
+**Error Responses:**
+
+| Status | Error | Description |
+|--------|-------|-------------|
+| `404` | Not Found | No hero images found |
+| `500` | Internal Server Error | Failed to fetch hero images |
+
+---
+
+### Get App Home Data
+
+**Endpoint:** `GET /api/home`
+
+Get App Home data for the home page. Returns structured data with product lists and HTML content.
+
+**Example Request:**
+```bash
+GET /api/home
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "top_sellers": ["OL-PC-91-vnl-1800g", "OL-PC-91-vnl-1800g"],
+  "new_arrivals": ["OL-PC-91-vnl-1800g", "OL-PC-91-vnl-1800g"],
+  "most_viewed": ["OL-PC-91-vnl-1800g", "OL-PC-91-vnl-1800g"],
+  "top_offers": ["OL-PC-91-vnl-1800g", "OL-PC-91-vnl-1800g"],
+  "html1": "<h1> HTML 1</h1>",
+  "html2": "<h1> HTML 2</h1>",
+  "html3": "<h1> HTML 3</h1>",
+  "modified": "2026-01-15 15:19:15.688817"
+}
+```
+
+**Data Structure:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `top_sellers` | Array<string> | Array of item codes for top-selling products |
+| `new_arrivals` | Array<string> | Array of item codes for newly arrived products |
+| `most_viewed` | Array<string> | Array of item codes for most viewed products |
+| `top_offers` | Array<string> | Array of item codes for top offers |
+| `html1` | string | HTML content for section 1 |
+| `html2` | string | HTML content for section 2 |
+| `html3` | string | HTML content for section 3 |
+| `modified` | string | Timestamp of last modification |
+
+**Usage:** Call this endpoint only when a user opens the home page, and only if the app's cached data is older than your refresh rate (e.g., 1 hour).
+
+**Error Responses:**
+
+| Status | Error | Description |
+|--------|-------|-------------|
+| `404` | Not Found | App Home data not found |
+| `500` | Internal Server Error | Failed to fetch App Home data |
+
+---
+
+### Adding Fields to App Home
+
+To add new fields to App Home:
+
+1. **Add field to App Home doctype in ERPNext**
+   - Add the new field to the App Home doctype
+   - If it's a JSON array (like `top_sellers`), store it as a JSON string
+   - If it's HTML content (like `html1`), store it as a text field
+
+2. **Update transformer** (`src/services/cache/transformer.js`)
+   - Open `transformAppHome()` function
+   - Add the new field to the output object
+   - If it's a JSON string field, parse it: `parseJsonField(data.new_field)`
+   - If it's a string field, include as-is: `new_field: data.new_field || ''`
+
+3. **Update API documentation**
+   - Add the new field to the response format documentation
+   - Document the field type and description
+
+4. **Automatic inclusion**
+   - The new field will automatically be included in:
+     - Hash computation (change detection)
+     - Cache storage
+     - Sync streams
+     - API responses
+
+**Example:**
+```javascript
+// In transformAppHome()
+const transformed = {
+  // ... existing fields ...
+  new_product_list: parseJsonField(data.new_product_list), // JSON array
+  new_html_content: data.new_html_content || '', // String field
+};
+```
+
+---
+
 ## Webhooks
 
 > **For ERPNext Administrators:** See **[ERPNEXT_WEBHOOKS.md](./ERPNEXT_WEBHOOKS.md)** for complete webhook configuration guide, including setup instructions, Jinja templates, and troubleshooting.
@@ -1518,7 +1663,7 @@ The middleware provides webhook endpoints for ERPNext to notify about data chang
 
 **Endpoint:** `POST /api/webhooks/erpnext`
 
-Unified endpoint supporting product, price, and stock updates. See [ERPNEXT_WEBHOOKS.md](./ERPNEXT_WEBHOOKS.md) for detailed configuration.
+Unified endpoint supporting product, price, stock, hero, and home updates. See [ERPNEXT_WEBHOOKS.md](./ERPNEXT_WEBHOOKS.md) for detailed configuration.
 
 **Product Update:**
 ```json
@@ -1533,6 +1678,20 @@ Unified endpoint supporting product, price, and stock updates. See [ERPNEXT_WEBH
 {
   "entity_type": "stock",
   "itemCode": "OL-EN-92-rng-1kg"
+}
+```
+
+**Hero Images Update:**
+```json
+{
+  "entity_type": "hero"
+}
+```
+
+**App Home Update:**
+```json
+{
+  "entity_type": "home"
 }
 ```
 
@@ -1752,9 +1911,22 @@ POST /api/webhooks/price-update
 
 ---
 
+## Frontend Integration
+
+For React Native developers integrating with this API, see **[FRONTEND_INTEGRATION.md](./FRONTEND_INTEGRATION.md)** for:
+- Complete integration examples with React Native code
+- Caching strategies and implementation patterns
+- Error handling best practices
+- Home page, product, and stock integration guides
+- Sync API usage examples
+
+---
+
 ## Support
 
 For issues or questions:
 - Check server logs: `logs/app.log` and `logs/error.log`
 - All errors are logged with structured JSON format
 - Analytics data is stored separately and can be inspected in Redis
+- **Frontend developers**: See [FRONTEND_INTEGRATION.md](./FRONTEND_INTEGRATION.md) for React Native integration guide
+- **ERPNext administrators**: See [ERPNEXT_WEBHOOKS.md](./ERPNEXT_WEBHOOKS.md) for webhook configuration

@@ -1,7 +1,12 @@
 // TTL in seconds
+// 0 = no expiration (persistent for sync)
 const CACHE_TTL = {
-  product: 3600, // 1 hour
-  default: 300, // 5 minutes
+  product: 0, // Persistent (no expiration) - sync-based updates
+  stock: 0, // Persistent (no expiration) - sync-based updates
+  hero: 0, // Persistent (no expiration) - sync-based updates
+  home: 0, // Persistent (no expiration) - sync-based updates
+  price: 0, // Persistent (no expiration) - sync-based updates
+  default: 300, // 5 minutes (for query caches and other temporary data)
 };
 
 // Query cache TTL (shorter than entity cache)
