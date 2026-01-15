@@ -34,7 +34,7 @@ function createErpnextClient() {
 }
 
 /**
- * Fetch product from ERPNext using query API with filters
+ * Fetch product from ERPNext using direct resource access (same pattern as Postman)
  * Returns transformed app-ready data
  * Uses server's ERPNext credentials (not user auth)
  */
@@ -43,41 +43,20 @@ async function fetchProduct(itemCode) {
     const client = createErpnextClient();
     const doctype = 'Website Item';
 
-    // Fields to request
-    const fields = [
-      'name', // ERPNext name field (e.g., WEB-ITM-0002) for analytics key
-      'item_code',
-      'item_name',
-      'web_item_name',
-      'brand',
-      'item_group',
-      'description',
-      'short_description',
-      'web_long_description',
-      'website_image',
-      'custom_variant',
-    ];
-
-    // Filters to get specific item
-    const filters = [['name', '=', itemCode]];
-
-    // Build query string
-    const queryParams = new URLSearchParams({
-      fields: JSON.stringify(fields),
-      filters: JSON.stringify(filters),
-    });
-
-    const url = `${doctype}?${queryParams.toString()}`;
+    // Use direct resource access: /api/resource/Website Item/WEB-ITM-0002
+    // This matches the Postman pattern that works
+    // Encode the doctype properly (spaces become %20)
+    const encodedDoctype = encodeURIComponent(doctype);
+    const url = `/api/resource/${encodedDoctype}/${itemCode}`;
     const response = await client.get(url);
 
-    // ERPNext query returns {data: [...]} format
-    if (!response.data || !response.data.data || response.data.data.length === 0) {
+    // Direct resource access returns {data: {...}} format directly
+    if (!response.data || !response.data.data) {
       return null;
     }
 
     // Wrap in {data: {...}} format for transformer
-    // Transformer expects single item, but we get array from query
-    const wrapped = { data: response.data.data[0] };
+    const wrapped = { data: response.data.data };
 
     // Transform to app-ready format
     const transformed = await transformProduct(wrapped);
@@ -163,7 +142,7 @@ async function fetchProductRaw(itemCode) {
 
 /**
  * Fetch all published Website Items with only name and custom_variant fields
- * Used for bulk price updates
+ * Used for bulk price updates and stock snapshots
  * @returns {Promise<Array>} Array of {name, custom_variant} objects
  */
 async function fetchPublishedWebsiteItems() {
@@ -174,23 +153,39 @@ async function fetchPublishedWebsiteItems() {
     const fields = ['name', 'custom_variant'];
     const filters = [['published', '=', 1]];
 
-    const queryParams = new URLSearchParams({
-      fields: JSON.stringify(fields),
+    // Build query string matching ERPNext API format
+    // Format: /api/resource/Website Item?filters=[["published","=",1]]&fields=["name","custom_variant"]
+    const encodedDoctype = encodeURIComponent(doctype);
+    const filtersStr = encodeURIComponent(JSON.stringify(filters));
+    const fieldsStr = encodeURIComponent(JSON.stringify(fields));
+    
+    const url = `/api/resource/${encodedDoctype}?filters=${filtersStr}&fields=${fieldsStr}`;
+    
+    logger.info('Fetching published website items', { 
+      url, 
       filters: JSON.stringify(filters),
+      fields: JSON.stringify(fields),
     });
-
-    const url = `${doctype}?${queryParams.toString()}`;
+    
     const response = await client.get(url);
 
     if (!response.data || !response.data.data) {
+      logger.warn('No data returned from ERPNext query', {
+        responseData: response.data,
+      });
       return [];
     }
+
+    logger.info('Fetched published website items', {
+      count: response.data.data.length,
+    });
 
     return response.data.data;
   } catch (error) {
     logger.error('Failed to fetch published website items', {
       error: error.message,
       status: error.response?.status,
+      responseData: error.response?.data,
     });
     throw error;
   }

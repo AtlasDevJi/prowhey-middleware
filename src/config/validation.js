@@ -66,6 +66,43 @@ const webhookPriceUpdateSchema = z.object({
   invalidateCache: z.boolean().optional().default(false),
 });
 
+// Unified ERPNext webhook body (supports product, price, stock)
+const webhookErpnextSchema = z
+  .object({
+    entity_type: z.enum(['product', 'price', 'stock']),
+    // Product fields
+    erpnextName: erpnextNameSchema.optional(),
+    // Price fields
+    sizeUnit: sizeUnitSchema.optional(),
+    price: z
+      .number()
+      .positive('Price must be positive')
+      .max(999999.99, 'Price exceeds maximum value')
+      .optional(),
+    // Stock fields
+    itemCode: itemCodeSchema.optional(),
+  })
+  .refine(
+    (data) => {
+      // Product requires erpnextName
+      if (data.entity_type === 'product') {
+        return !!data.erpnextName;
+      }
+      // Price requires erpnextName, sizeUnit, price
+      if (data.entity_type === 'price') {
+        return !!(data.erpnextName && data.sizeUnit && data.price !== undefined);
+      }
+      // Stock requires itemCode only (availability fetched from ERPNext)
+      if (data.entity_type === 'stock') {
+        return !!data.itemCode;
+      }
+      return true;
+    },
+    {
+      message: 'Invalid payload for entity_type',
+    }
+  );
+
 /**
  * Combined schemas for middleware
  * These combine params, query, and body validation
@@ -96,6 +133,13 @@ const analyticsCommentRequestSchema = z.object({
 const webhookPriceUpdateRequestSchema = z.object({
   params: z.object({}).passthrough(),
   body: webhookPriceUpdateSchema,
+  query: z.object({}).passthrough(),
+});
+
+// Unified ERPNext webhook: only body
+const webhookErpnextRequestSchema = z.object({
+  params: z.object({}).passthrough(),
+  body: webhookErpnextSchema,
   query: z.object({}).passthrough(),
 });
 
@@ -252,6 +296,7 @@ module.exports = {
 
   // Webhook schemas
   webhookPriceUpdateSchema,
+  webhookErpnextSchema,
 
   // Auth schemas
   signupSchema,
@@ -269,6 +314,7 @@ module.exports = {
   analyticsRatingRequestSchema,
   analyticsCommentRequestSchema,
   webhookPriceUpdateRequestSchema,
+  webhookErpnextRequestSchema,
   signupRequestSchema,
   loginRequestSchema,
   verifyRequestSchema,

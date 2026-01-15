@@ -7,6 +7,8 @@ This directory contains documentation for the Prowhey Middleware API.
 ## Documentation Files
 
 - **[API.md](./api/API.md)** - Complete API documentation with endpoints, request/response formats, and examples
+- **[SYNC_API.md](./api/SYNC_API.md)** - Detailed sync API documentation for frontend apps
+- **[ERPNEXT_WEBHOOKS.md](./api/ERPNEXT_WEBHOOKS.md)** - ERPNext webhook configuration guide for administrators
 
 ## Quick Links
 
@@ -22,7 +24,10 @@ This directory contains documentation for the Prowhey Middleware API.
 ### Management Endpoints
 - [Bulk Price Update](./api/API.md#bulk-price-update)
 - [Bulk Stock Update](./api/API.md#bulk-stock-update)
-- [Price Update Webhook](./api/API.md#price-update-webhook)
+- [Webhooks](./api/API.md#webhooks)
+
+### ERPNext Integration
+- [ERPNext Webhook Configuration](./api/ERPNEXT_WEBHOOKS.md) - Complete guide for setting up ERPNext webhooks
 
 ## Getting Started
 

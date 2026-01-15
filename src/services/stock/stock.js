@@ -4,7 +4,12 @@ const {
   setStockAvailability,
   getWarehouseReference,
   setWarehouseReference,
+  setCacheHash,
+  getCacheHash,
+  incrementCacheHashVersion,
 } = require('../redis/cache');
+const { computeDataHash } = require('../sync/hash-computer');
+const { addStreamEntry } = require('../sync/stream-manager');
 const { logger } = require('../logger');
 
 /**
@@ -35,11 +40,13 @@ function parseCustomVariant(customVariantString) {
  * You can update warehouses:reference in Redis anytime and it will be used
  */
 const DEFAULT_WAREHOUSE_REFERENCE = [
-  'Idlib Store - P',
-  'Allepo Store - P',
-  'Homs Store - P',
-  'Hama Store - P',
-  'Latakia Store - P',
+  'Idlib Store',
+  'Aleppo Store',
+  'Hama Store',
+  'Homs Store',
+  'Tartus Store',
+  'Latakia Store',
+  'Damascus Store',
 ];
 
 /**
@@ -125,20 +132,67 @@ async function updateItemAvailability(itemCode, referenceWarehouses) {
       referenceWarehouses
     );
 
-    // Cache the availability array
+    // Prepare stock data for hash computation
+    const stockData = { itemCode, availability: availabilityArray };
+
+    // Compute hash
+    const newHash = computeDataHash(stockData);
+
+    // Get existing cache
+    const existing = await getCacheHash('stock', itemCode);
+
+    // Check if changed
+    let version = '1';
+    let changed = true;
+
+    if (existing) {
+      if (existing.data_hash === newHash) {
+        // No change detected
+        changed = false;
+        logger.info('Stock update: no change detected', {
+          itemCode,
+          hash: newHash,
+        });
+        // Still return the availability array (for backward compatibility)
+        return availabilityArray;
+      }
+      // Data changed, increment version
+      version = await incrementCacheHashVersion('stock', itemCode);
+      if (!version) {
+        version = (parseInt(existing.version) + 1).toString();
+      }
+    }
+
+    // Cache the availability array (backward compatibility)
     const success = await setStockAvailability(itemCode, availabilityArray);
 
-    if (success) {
-      logger.info('Item availability updated', {
-        itemCode,
-        warehousesWithStock,
-        availabilityArray,
-      });
-      return availabilityArray;
-    } else {
+    if (!success) {
       logger.error('Failed to cache item availability', { itemCode });
       return null;
     }
+
+    // Update cache hash with metadata
+    const updatedAt = Date.now().toString();
+    await setCacheHash('stock', itemCode, stockData, {
+      data_hash: newHash,
+      updated_at: updatedAt,
+      version,
+    });
+
+    // Add stream entry if changed
+    if (changed) {
+      await addStreamEntry('stock', itemCode, newHash, version);
+    }
+
+    logger.info('Item availability updated', {
+      itemCode,
+      warehousesWithStock,
+      availabilityArray,
+      changed,
+      version,
+      hash: newHash,
+    });
+    return availabilityArray;
   } catch (error) {
     logger.error('Failed to update item availability', {
       itemCode,
@@ -289,5 +343,6 @@ module.exports = {
   updateAllStock,
   getWarehouseReferenceArray,
   buildAvailabilityArray,
+  parseCustomVariant,
 };
 

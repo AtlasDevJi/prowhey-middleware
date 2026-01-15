@@ -9,7 +9,8 @@
 - [Analytics Endpoints](#analytics-endpoints)
 - [Price Management](#price-management)
 - [Stock Management](#stock-management)
-- [Webhooks](#webhooks)
+- [Webhooks](#webhooks) - See [ERPNEXT_WEBHOOKS.md](./ERPNEXT_WEBHOOKS.md) for ERPNext webhook configuration guide
+- [Sync API](#sync-api) - See [SYNC_API.md](./SYNC_API.md) for detailed sync endpoint documentation
 - [Error Handling](#error-handling)
 - [Caching Strategy](#caching-strategy)
 - [Examples](#examples)
@@ -737,11 +738,15 @@ GET /api/auth/check-username?username=johndoe
 
 ## Product Endpoints
 
+**Note:** Follow the [detail-page-driven caching strategy](#data-sync-strategy) - only fetch product data when a user opens a product detail page, and respect your refresh rate (e.g., 1 hour).
+
 ### Get Single Product
 
 **Endpoint:** `GET /api/resource/Website Item?filters=[["name", "=", "WEB-ITM-0002"]]`
 
 Fetches a single product by its ERPNext name field. Returns product data from ERPNext (cached) plus analytics data from Redis.
+
+**Usage:** Call this endpoint only when a user opens a product detail page, and only if the app's cached data is older than your refresh rate (e.g., 1 hour).
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
@@ -879,6 +884,8 @@ GET /api/resource/Website%20Item?filters=[["published","=",1]]&fields=["name","w
 ## Analytics Endpoints
 
 All analytics endpoints use the **ERPNext `name` field** (e.g., `WEB-ITM-0002`) as the product identifier. Analytics data is stored in Redis, not ERPNext.
+
+**Note:** Follow the [detail-page-driven caching strategy](#data-sync-strategy) - only fetch analytics data (comments, ratings) when a user opens a product detail page, and respect your refresh rate (e.g., 1 hour).
 
 ### Increment Product Views
 
@@ -1195,13 +1202,208 @@ POST /api/price/update-all
 
 ## Stock Management
 
-### Bulk Stock Update
+### Data Sync Strategy
+
+**Important:** Stock availability (and other entity data like comments, ratings) should follow a **detail-page-driven caching strategy**:
+
+1. **Fetch Only on Detail Page Access**: Only fetch stock availability when a user opens a product detail page
+2. **Respect Refresh Rate**: Implement a refresh rate (e.g., 1 hour) to prevent excessive API calls
+   - Cache the data in the app with a timestamp
+   - Only fetch from API if cache is older than the refresh rate
+3. **Server-Side Caching**: Items accessed via detail pages are cached in Redis and served to all users
+   - First user to open a detail page triggers the fetch and caches it
+   - Subsequent users get the cached data until refresh rate expires
+4. **No Background Updates**: Items not accessed in detail view should **not** be updated automatically
+   - This prevents unnecessary API calls and server load
+   - Only actively viewed products are kept fresh
+
+**Example Flow:**
+```
+User opens Product Detail Page
+  ↓
+Check app cache (timestamp)
+  ↓
+Cache expired? (older than 1 hour)
+  ↓ YES
+Call GET /api/stock/:itemCode
+  ↓
+Server checks Redis cache
+  ↓
+Cache hit → Return cached data
+Cache miss → Fetch from ERPNext → Cache → Return
+  ↓
+App caches response with timestamp
+```
+
+This strategy applies to:
+- Stock availability
+- Product comments
+- Product ratings
+- Any other entity data that benefits from on-demand caching
+
+---
+
+### Get Stock Availability for Specific Item
+
+**Endpoint:** `GET /api/stock/:itemCode`
+
+Get stock availability array for a specific item code. Returns only the availability array (warehouse reference should be fetched separately).
+
+**Usage:** Call this endpoint only when a user opens a product detail page, and only if the app's cached data is older than your refresh rate (e.g., 1 hour).
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `itemCode` | Path | Yes | Item code (e.g., `OL-EN-92-rng-1kg`) |
+
+**Example Request:**
+```bash
+GET /api/stock/OL-EN-92-rng-1kg
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "itemCode": "OL-EN-92-rng-1kg",
+  "availability": [0, 0, 1, 0, 1, 0, 0]
+}
+```
+
+**Availability Array Interpretation:**
+- Each index corresponds to a warehouse in the warehouse reference array
+- `0` = No stock in that warehouse
+- `1` = Stock available in that warehouse
+- Array length matches the warehouse reference array length
+- Example: `[0, 0, 1, 0, 1, 0, 0]` means stock is available at index 2 and index 4 (check warehouse reference to see which warehouses these are)
+
+**Note:** The warehouse reference array should be fetched separately using `GET /api/stock/warehouses/reference` and cached in the app. Since warehouses rarely change, fetch this once a month.
+
+**Error Responses:**
+
+| Status | Error | Description |
+|--------|-------|-------------|
+| `404` | Not Found | Item code not found or no stock data cached |
+| `500` | Internal Server Error | Failed to fetch stock availability |
+
+---
+
+### Get Warehouse Reference
+
+**Endpoint:** `GET /api/stock/warehouses/reference`
+
+Get the warehouse reference array. This defines the order of warehouses used in availability arrays. **Fetch this once a month** since warehouses are rarely added or removed.
+
+**Example Request:**
+```bash
+GET /api/stock/warehouses/reference
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "warehouses": [
+    "Idlib Store",
+    "Aleppo Store",
+    "Hama Store",
+    "Homs Store",
+    "Tartus Store",
+    "Latakia Store",
+    "Damascus Store"
+  ],
+  "count": 7
+}
+```
+
+**Usage:**
+- Store this array in your app
+- Use it to interpret availability arrays from stock endpoints
+- Each index in the availability array corresponds to the warehouse at that index in this reference
+- Fetch once a month or when you detect a change in availability array length
+
+**Example:**
+If availability array is `[0, 0, 1, 0, 1, 0, 0]` and warehouse reference is `["Idlib Store", "Aleppo Store", "Hama Store", "Homs Store", "Tartus Store", "Latakia Store", "Damascus Store"]`:
+- Index 0 (Idlib Store): No stock (0)
+- Index 1 (Aleppo Store): No stock (0)
+- Index 2 (Hama Store): Stock available (1)
+- Index 3 (Homs Store): No stock (0)
+- Index 4 (Tartus Store): Stock available (1)
+- Index 5 (Latakia Store): No stock (0)
+- Index 6 (Damascus Store): No stock (0)
+
+**Error Responses:**
+
+| Status | Error | Description |
+|--------|-------|-------------|
+| `500` | Internal Server Error | Failed to fetch warehouse reference |
+
+---
+
+### Bulk Stock Snapshot (All Items)
 
 **Endpoint:** `POST /api/stock/update-all`
 
-Triggers a bulk stock availability update for all published products. Fetches stock from ERPNext Bin API and caches availability arrays in Redis.
+Triggers a bulk stock snapshot for all published products. Fetches stock from ERPNext Bin API for all item codes found in product variants, compares with cached data, and updates cache and streams only if changes are detected.
 
-**Important:** Processes **ALL flavors** (not just first) since each flavor has its own stock availability.
+**Key Features:**
+- Processes **ALL flavors** (not just first) since each flavor has its own stock availability
+- **Deduplicates item codes** - processes each unique item code only once, even if it appears multiple times in variants
+- **Hash-based change detection** - only updates stream if data changed
+- **Manual change detection** - detects if Redis values were manually changed and updates accordingly
+- **Parallel processing** - processes items in batches of 10 for better performance
+- Runs automatically weekly via scheduler (configurable)
+
+**Example Request:**
+```bash
+POST /api/stock/update-all
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "totalProductsFetched": 6,
+  "productsWithVariants": 6,
+  "itemsProcessed": 15,
+  "updated": 12,
+  "unchanged": 3,
+  "failed": 0,
+  "errors": []
+}
+```
+
+**Response Fields:**
+
+| Field | Description |
+|-------|-------------|
+| `totalProductsFetched` | Total number of unique item codes found across all products |
+| `productsWithVariants` | Same as `totalProductsFetched` (for compatibility) |
+| `itemsProcessed` | Total number of unique item codes processed (deduplicated) |
+| `updated` | Number of items updated (data changed or manual change detected) |
+| `unchanged` | Number of items with no changes detected |
+| `failed` | Number of items that failed to process |
+| `errors` | Array of error objects with details (itemCode, erpnextName, error message) |
+
+**How It Works:**
+
+1. **Collection Phase:**
+   - Fetches all published Website Items from ERPNext
+   - Extracts all item codes from all variants (all sizes, all flavors)
+   - Deduplicates item codes (same item code appears only once)
+
+2. **Processing Phase:**
+   - Processes items in parallel batches of 10
+   - For each item code:
+     - Fetches stock from ERPNext Bin API
+     - Builds availability array using warehouse reference
+     - Compares hash with cached hash
+     - If hash matches, also compares actual Redis array (detects manual changes)
+     - Updates cache and stream only if changes detected
+
+3. **Result:**
+   - Returns summary of what was processed
+   - Stream entries created only for changed items
+   - Cache updated with latest ERPNext data
 
 **Example Request:**
 ```bash
@@ -1244,8 +1446,9 @@ POST /api/stock/update-all
 
 | Key Format | Example | Value |
 |------------|---------|-------|
-| `availability:{itemCode}` | `availability:OL-EN-92-rng-1kg` | `[0,0,1,0,1]` |
-| `warehouses:reference` | `warehouses:reference` | `["Idlib Store - P","Allepo Store - P",...]` |
+| `availability:{itemCode}` | `availability:OL-EN-92-rng-1kg` | `[0,0,1,0,1,0,0]` (simple key for backward compatibility) |
+| `hash:stock:{itemCode}` | `hash:stock:OL-EN-92-rng-1kg` | Redis Hash with `data`, `data_hash`, `updated_at`, `version` |
+| `warehouses:reference` | `warehouses:reference` | `["Idlib Store","Aleppo Store",...]` |
 
 **Availability Array Format:**
 
@@ -1253,28 +1456,49 @@ The availability array is a binary array where:
 - `0` = No stock in that warehouse
 - `1` = Stock available in that warehouse
 - Array index corresponds to warehouse position in the reference array
+- Array length always matches warehouse reference length
 
 **Example:**
 
 | Warehouse Reference | Availability Array | Meaning |
 |-------------------|-------------------|---------|
-| `["Idlib Store - P", "Allepo Store - P", "Homs Store - P", "Hama Store - P", "Latakia Store - P"]` | `[0,0,1,0,1]` | Stock available in Homs and Latakia stores |
+| `["Idlib Store", "Aleppo Store", "Hama Store", "Homs Store", "Tartus Store", "Latakia Store", "Damascus Store"]` | `[0,0,1,0,1,0,0]` | Stock available in Hama Store (index 2) and Tartus Store (index 4) |
 
 **Stock Lookup:**
 - Fetches from ERPNext `Bin` doctype
 - Filter: `actual_qty > 0` (only warehouses with stock)
 - Returns array of warehouse names where stock exists
 - Builds binary array matching warehouse reference order
+- Case-insensitive warehouse name matching
 
 **Updating Warehouse Reference:**
 
 The warehouse reference array is stored in Redis and can be updated directly:
 
 ```bash
-redis-cli SET warehouses:reference '["Idlib Store - P","Allepo Store - P","Homs Store - P","Hama Store - P","Latakia Store - P"]'
+# Get current reference
+redis-cli GET warehouses:reference
+
+# Update reference (use exact warehouse names as they appear in ERPNext)
+redis-cli SET warehouses:reference '["Idlib Store","Aleppo Store","Hama Store","Homs Store","Tartus Store","Latakia Store","Damascus Store"]'
 ```
 
-**Important:** After updating the warehouse reference, run the bulk stock update again to regenerate all availability arrays with the correct length.
+**Important:** 
+- After updating the warehouse reference, run the bulk stock snapshot (`POST /api/stock/update-all`) to regenerate all availability arrays with the correct length
+- Warehouse names are matched case-insensitively when building availability arrays
+- If a warehouse from ERPNext doesn't match any warehouse in the reference, it will be logged as a warning but won't cause an error
+
+**Weekly Automatic Snapshot:**
+
+The bulk stock snapshot runs automatically every week (default: Saturday at 6 AM) via the scheduled task. This ensures:
+- All stock data stays in sync with ERPNext
+- Manual Redis changes are detected and corrected
+- Stream entries are created for any changes
+
+**Configuration:**
+- `SYNC_FULL_REFRESH_DAY` - Day of week (0-6, 0=Sunday, default: 6=Saturday)
+- `SYNC_FULL_REFRESH_HOUR` - Hour (0-23, default: 6)
+- `ENABLE_SCHEDULED_REFRESH` - Set to `false` to disable automatic snapshots
 
 **Error Responses:**
 
@@ -1286,7 +1510,33 @@ redis-cli SET warehouses:reference '["Idlib Store - P","Allepo Store - P","Homs 
 
 ## Webhooks
 
-### Price Update Webhook
+> **For ERPNext Administrators:** See **[ERPNEXT_WEBHOOKS.md](./ERPNEXT_WEBHOOKS.md)** for complete webhook configuration guide, including setup instructions, Jinja templates, and troubleshooting.
+
+The middleware provides webhook endpoints for ERPNext to notify about data changes. Webhooks trigger the middleware to fetch the latest data from ERPNext and update the cache and sync streams.
+
+### Unified ERPNext Webhook
+
+**Endpoint:** `POST /api/webhooks/erpnext`
+
+Unified endpoint supporting product, price, and stock updates. See [ERPNEXT_WEBHOOKS.md](./ERPNEXT_WEBHOOKS.md) for detailed configuration.
+
+**Product Update:**
+```json
+{
+  "entity_type": "product",
+  "erpnextName": "WEB-ITM-0002"
+}
+```
+
+**Stock Update:**
+```json
+{
+  "entity_type": "stock",
+  "itemCode": "OL-EN-92-rng-1kg"
+}
+```
+
+### Legacy Price Update Webhook
 
 **Endpoint:** `POST /api/webhooks/price-update`
 
@@ -1332,6 +1582,21 @@ Content-Type: application/json
 |--------|-------|-------------|
 | `400` | Bad Request | Missing required fields or invalid price |
 | `500` | Internal Server Error | Failed to update price |
+
+---
+
+## Sync API
+
+For detailed documentation on sync endpoints and data structures, see **[SYNC_API.md](./SYNC_API.md)**.
+
+The sync API provides endpoints for efficiently syncing data between the middleware and React Native frontend:
+
+- **`POST /api/sync/check`** - Unified sync endpoint (all entity types)
+- **`POST /api/sync/check-fast`** - Fast-frequency sync (views, comments, user profile)
+- **`POST /api/sync/check-medium`** - Medium-frequency sync (stock, notifications)
+- **`POST /api/sync/check-slow`** - Slow-frequency sync (products, prices, hero list)
+
+The sync system uses Redis Streams to track changes and only returns updates when data has actually changed, minimizing bandwidth and processing.
 
 ---
 

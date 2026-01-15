@@ -128,6 +128,14 @@ app.use('/api/security', securityRoutes);
 const authRoutes = require('./routes/auth');
 app.use('/api/auth', authRoutes);
 
+// Sync routes
+const syncRoutes = require('./routes/sync');
+app.use('/api/sync', resourceRateLimiter, syncRoutes);
+
+// ERPNext routes (ping endpoint for local testing)
+const erpnextRoutes = require('./routes/erpnext');
+app.use('/api/erpnext', resourceRateLimiter, erpnextRoutes);
+
 // 404 handler - throw NotFoundError
 const { NotFoundError } = require('./utils/errors');
 app.use((req, _res, _next) => {
@@ -137,6 +145,13 @@ app.use((req, _res, _next) => {
 // Error handler middleware (must be last)
 const { errorHandler } = require('./middleware/error-handler');
 app.use(errorHandler);
+
+// Start scheduled full refresh (weekly snapshot)
+const { startScheduledFullRefresh } = require('./services/scheduled/full-refresh-scheduler');
+if (process.env.ENABLE_SCHEDULED_REFRESH !== 'false') {
+  startScheduledFullRefresh();
+  console.log('Weekly full refresh scheduler started');
+}
 
 // Start server
 const server = app.listen(PORT, () => {

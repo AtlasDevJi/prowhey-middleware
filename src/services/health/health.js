@@ -39,7 +39,7 @@ async function checkErpnextHealth() {
     const startTime = Date.now();
     
     // Make lightweight API call to check connectivity
-    // Using User resource with minimal data (limit_page_length=1)
+    // Using direct resource access (more reliable than query API)
     await client.get('/api/resource/User?limit_page_length=1');
     
     const responseTime = Date.now() - startTime;

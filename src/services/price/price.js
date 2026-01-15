@@ -1,5 +1,13 @@
 const { createErpnextClient } = require('../erpnext/client');
-const { getPrice, setPrice } = require('../redis/cache');
+const {
+  getPrice,
+  setPrice,
+  setCacheHash,
+  getCacheHash,
+  incrementCacheHashVersion,
+} = require('../redis/cache');
+const { computeDataHash } = require('../sync/hash-computer');
+const { addStreamEntry } = require('../sync/stream-manager');
 const { logger } = require('../logger');
 
 /**
@@ -78,7 +86,78 @@ async function getCachedPrice(erpnextName, sizeUnit) {
  * @returns {Promise<boolean>} Success status
  */
 async function setCachedPrice(erpnextName, sizeUnit, price) {
-  return await setPrice(erpnextName, sizeUnit, price);
+  try {
+    const entityId = `${erpnextName}:${sizeUnit}`;
+    const priceData = { price, erpnextName, sizeUnit };
+
+    // Compute hash
+    const newHash = computeDataHash(priceData);
+
+    // Get existing cache
+    const existing = await getCacheHash('price', entityId);
+
+    // Check if changed
+    let version = '1';
+    let changed = true;
+
+    if (existing) {
+      if (existing.data_hash === newHash) {
+        // No change detected
+        changed = false;
+        logger.info('Price update: no change detected', {
+          erpnextName,
+          sizeUnit,
+          hash: newHash,
+        });
+        // Still update simple key for backward compatibility
+        await setPrice(erpnextName, sizeUnit, price);
+        return true;
+      }
+      // Data changed, increment version
+      version = await incrementCacheHashVersion('price', entityId);
+      if (!version) {
+        version = (parseInt(existing.version) + 1).toString();
+      }
+    }
+
+    // Update simple key for backward compatibility
+    const success = await setPrice(erpnextName, sizeUnit, price);
+    if (!success) {
+      return false;
+    }
+
+    // Update cache hash with metadata
+    const updatedAt = Date.now().toString();
+    await setCacheHash('price', entityId, priceData, {
+      data_hash: newHash,
+      updated_at: updatedAt,
+      version,
+    });
+
+    // Add stream entry if changed
+    if (changed) {
+      await addStreamEntry('price', entityId, newHash, version);
+    }
+
+    logger.info('Price cached with sync metadata', {
+      erpnextName,
+      sizeUnit,
+      price,
+      changed,
+      version,
+      hash: newHash,
+    });
+
+    return true;
+  } catch (error) {
+    logger.error('Price cache error', {
+      erpnextName,
+      sizeUnit,
+      error: error.message,
+    });
+    // Fallback to simple setPrice for backward compatibility
+    return await setPrice(erpnextName, sizeUnit, price);
+  }
 }
 
 /**

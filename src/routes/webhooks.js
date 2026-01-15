@@ -1,9 +1,13 @@
 const express = require('express');
 const { setCachedPrice } = require('../services/price/price');
 const { deleteCache } = require('../services/redis/cache');
+const { processWebhook } = require('../services/webhooks/unified-handler');
 const { logger } = require('../services/logger');
 const { validateRequest } = require('../middleware/validate');
-const { webhookPriceUpdateRequestSchema } = require('../config/validation');
+const {
+  webhookPriceUpdateRequestSchema,
+  webhookErpnextRequestSchema,
+} = require('../config/validation');
 const { handleAsyncErrors } = require('../utils/error-utils');
 const { InternalServerError } = require('../utils/errors');
 
@@ -73,6 +77,57 @@ router.post(
       }
       // Otherwise, wrap in InternalServerError
       throw new InternalServerError('Failed to process price update');
+    }
+  })
+);
+
+/**
+ * POST /api/webhooks/erpnext
+ * Unified webhook endpoint for ERPNext to notify changes
+ * Supports product, price, and stock entity types
+ * Body format:
+ * {
+ *   entity_type: "product" | "price" | "stock",
+ *   // For product:
+ *   erpnextName: "WEB-ITM-0002",
+ *   // For price:
+ *   erpnextName: "WEB-ITM-0002",
+ *   sizeUnit: "5lb",
+ *   price: 29.99,
+ *   // For stock:
+ *   itemCode: "ITEM-001",
+ *   availability: [0,0,1,0,1]
+ * }
+ */
+router.post(
+  '/erpnext',
+  validateRequest(webhookErpnextRequestSchema),
+  handleAsyncErrors(async (req, res) => {
+    const { entity_type, ...payload } = req.validatedBody;
+
+    try {
+      // Process webhook using unified handler
+      const result = await processWebhook(entity_type, payload);
+
+      if (result.error) {
+        throw new InternalServerError(result.error);
+      }
+
+      return res.json({
+        success: true,
+        message: `${entity_type} webhook processed successfully`,
+        changed: result.changed,
+        version: result.version,
+        streamId: result.streamId,
+        entity_type,
+      });
+    } catch (error) {
+      // If it's already an AppError, re-throw it
+      if (error.isOperational) {
+        throw error;
+      }
+      // Otherwise, wrap in InternalServerError
+      throw new InternalServerError(`Failed to process ${entity_type} webhook`);
     }
   })
 );

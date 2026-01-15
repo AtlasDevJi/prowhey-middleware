@@ -55,6 +55,8 @@ async function createUser(userData) {
       deletedAt: null,
       erpnextCustomerId: userData.erpnextCustomerId || null,
       deviceId: userData.deviceId || null,
+      groups: userData.groups || [], // User groups for notification targeting
+      region: userData.region || null, // User region for notification targeting
     };
 
     // Store user

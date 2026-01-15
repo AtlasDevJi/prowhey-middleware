@@ -341,6 +341,173 @@ async function setWarehouseReference(warehouseArray) {
   }
 }
 
+/**
+ * Set cached entity using Redis Hash structure with metadata
+ * Stores data as JSON string in 'data' field, plus metadata fields
+ * @param {string} entityType - Entity type (e.g., 'product', 'price', 'stock')
+ * @param {string} entityId - Entity ID
+ * @param {object} data - Data object to store (will be JSON stringified)
+ * @param {object} metadata - Metadata object with data_hash, updated_at, version
+ * @returns {Promise<boolean>} Success status
+ */
+async function setCacheHash(entityType, entityId, data, metadata = {}) {
+  try {
+    const redis = getRedisClient();
+    // Use separate key namespace for hash-based cache to avoid clashing with simple string keys
+    const cacheKey = `hash:${getCacheKey(entityType, entityId)}`;
+    const ttl = getEntityTTL(entityType);
+
+    if (!data || typeof data !== 'object') {
+      return false;
+    }
+
+    // Prepare hash fields
+    const hashFields = {
+      data: JSON.stringify(data),
+      data_hash: metadata.data_hash || '',
+      updated_at: metadata.updated_at || Date.now().toString(),
+      version: metadata.version || '1',
+    };
+
+    // Set hash fields
+    await redis.hset(cacheKey, hashFields);
+
+    // Set TTL on the hash key
+    await redis.expire(cacheKey, ttl);
+
+    return true;
+  } catch (error) {
+    logger.error('Cache hash set error', {
+      entityType,
+      entityId,
+      error: error.message,
+    });
+    return false;
+  }
+}
+
+/**
+ * Get cached entity from Redis Hash structure
+ * Returns object with data and metadata fields
+ * @param {string} entityType - Entity type
+ * @param {string} entityId - Entity ID
+ * @returns {Promise<object|null>} Object with {data, data_hash, updated_at, version} or null
+ */
+async function getCacheHash(entityType, entityId) {
+  try {
+    const redis = getRedisClient();
+    const cacheKey = `hash:${getCacheKey(entityType, entityId)}`;
+    const hashData = await redis.hgetall(cacheKey);
+
+    if (!hashData || !hashData.data) {
+      return null;
+    }
+
+    return {
+      data: JSON.parse(hashData.data),
+      data_hash: hashData.data_hash || '',
+      updated_at: hashData.updated_at || '',
+      version: hashData.version || '1',
+    };
+  } catch (error) {
+    logger.error('Cache hash get error', {
+      entityType,
+      entityId,
+      error: error.message,
+    });
+    return null;
+  }
+}
+
+/**
+ * Get only the data field from Redis Hash (for backward compatibility)
+ * @param {string} entityType - Entity type
+ * @param {string} entityId - Entity ID
+ * @returns {Promise<object|null>} Parsed data object or null
+ */
+async function getCacheHashData(entityType, entityId) {
+  try {
+    const hashData = await getCacheHash(entityType, entityId);
+    return hashData ? hashData.data : null;
+  } catch (error) {
+    logger.error('Cache hash data get error', {
+      entityType,
+      entityId,
+      error: error.message,
+    });
+    return null;
+  }
+}
+
+/**
+ * Update cache hash metadata fields only (preserves data)
+ * @param {string} entityType - Entity type
+ * @param {string} entityId - Entity ID
+ * @param {object} metadata - Metadata fields to update (data_hash, updated_at, version)
+ * @returns {Promise<boolean>} Success status
+ */
+async function updateCacheHashMetadata(entityType, entityId, metadata) {
+  try {
+    const redis = getRedisClient();
+    const cacheKey = `hash:${getCacheKey(entityType, entityId)}`;
+
+    // Check if hash exists
+    const exists = await redis.exists(cacheKey);
+    if (!exists) {
+      return false;
+    }
+
+    // Update only specified metadata fields
+    const updates = {};
+    if (metadata.data_hash !== undefined) updates.data_hash = metadata.data_hash;
+    if (metadata.updated_at !== undefined) updates.updated_at = metadata.updated_at;
+    if (metadata.version !== undefined) updates.version = metadata.version;
+
+    if (Object.keys(updates).length > 0) {
+      await redis.hset(cacheKey, updates);
+    }
+
+    return true;
+  } catch (error) {
+    logger.error('Cache hash metadata update error', {
+      entityType,
+      entityId,
+      error: error.message,
+    });
+    return false;
+  }
+}
+
+/**
+ * Increment version in cache hash
+ * @param {string} entityType - Entity type
+ * @param {string} entityId - Entity ID
+ * @returns {Promise<number|null>} New version number or null if failed
+ */
+async function incrementCacheHashVersion(entityType, entityId) {
+  try {
+    const redis = getRedisClient();
+    const cacheKey = `hash:${getCacheKey(entityType, entityId)}`;
+
+    // Check if hash exists
+    const exists = await redis.exists(cacheKey);
+    if (!exists) {
+      return null;
+    }
+
+    // Increment version using HINCRBY
+    const newVersion = await redis.hincrby(cacheKey, 'version', 1);
+    return newVersion.toString();
+  } catch (error) {
+    logger.error('Cache hash version increment error', {
+      entityType,
+      entityId,
+      error: error.message,
+    });
+    return null;
+  }
+}
+
 module.exports = {
   getCache,
   setCache,
@@ -356,6 +523,12 @@ module.exports = {
   setStockAvailability,
   getWarehouseReference,
   setWarehouseReference,
+  // Hash-based cache operations
+  setCacheHash,
+  getCacheHash,
+  getCacheHashData,
+  updateCacheHashMetadata,
+  incrementCacheHashVersion,
 };
 
 
