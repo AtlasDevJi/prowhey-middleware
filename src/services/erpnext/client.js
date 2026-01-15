@@ -198,6 +198,117 @@ async function fetchPublishedWebsiteItems() {
 }
 
 /**
+ * Fetch retail and wholesale prices for an item from Item Price doctype
+ * Returns object with retail and wholesale prices
+ * @param {string} itemCode - The item code to fetch prices for
+ * @returns {Promise<{retail: number|null, wholesale: number|null}>} Object with retail and wholesale prices
+ */
+async function fetchItemPrices(itemCode) {
+  try {
+    const client = createErpnextClient();
+    const doctype = 'Item Price';
+    const encodedDoctype = encodeURIComponent(doctype);
+
+    // Fetch both prices in parallel
+    const [retailResult, wholesaleResult] = await Promise.allSettled([
+      // Retail price (Standard Selling)
+      (async () => {
+        try {
+          const fields = ['price_list_rate'];
+          const filters = [
+            ['item_code', '=', itemCode],
+            ['price_list', '=', 'Standard Selling'],
+          ];
+
+          const filtersStr = encodeURIComponent(JSON.stringify(filters));
+          const fieldsStr = encodeURIComponent(JSON.stringify(fields));
+          
+          const url = `/api/resource/${encodedDoctype}?filters=${filtersStr}&fields=${fieldsStr}`;
+          const response = await client.get(url);
+
+          if (!response.data || !response.data.data || response.data.data.length === 0) {
+            logger.info('Retail price not found', { itemCode, priceList: 'Standard Selling' });
+            return null;
+          }
+
+          const priceData = response.data.data[0];
+          const price = parseFloat(priceData.price_list_rate);
+          return isNaN(price) ? null : price;
+        } catch (error) {
+          logger.error('Error fetching retail price', {
+            itemCode,
+            error: error.message,
+            status: error.response?.status,
+            responseData: error.response?.data,
+          });
+          throw error;
+        }
+      })(),
+      // Wholesale price (Wholesale Selling)
+      (async () => {
+        try {
+          const fields = ['price_list_rate'];
+          const filters = [
+            ['item_code', '=', itemCode],
+            ['price_list', '=', 'Wholesale Selling'],
+          ];
+
+          const filtersStr = encodeURIComponent(JSON.stringify(filters));
+          const fieldsStr = encodeURIComponent(JSON.stringify(fields));
+          
+          const url = `/api/resource/${encodedDoctype}?filters=${filtersStr}&fields=${fieldsStr}`;
+          const response = await client.get(url);
+
+          if (!response.data || !response.data.data || response.data.data.length === 0) {
+            logger.info('Wholesale price not found', { itemCode, priceList: 'Wholesale Selling' });
+            return null;
+          }
+
+          const priceData = response.data.data[0];
+          const price = parseFloat(priceData.price_list_rate);
+          return isNaN(price) ? null : price;
+        } catch (error) {
+          logger.error('Error fetching wholesale price', {
+            itemCode,
+            error: error.message,
+            status: error.response?.status,
+            responseData: error.response?.data,
+          });
+          throw error;
+        }
+      })(),
+    ]);
+
+    // Log any rejected promises
+    if (retailResult.status === 'rejected') {
+      logger.error('Retail price fetch rejected', {
+        itemCode,
+        error: retailResult.reason?.message || retailResult.reason,
+      });
+    }
+    if (wholesaleResult.status === 'rejected') {
+      logger.error('Wholesale price fetch rejected', {
+        itemCode,
+        error: wholesaleResult.reason?.message || wholesaleResult.reason,
+      });
+    }
+
+    const retail = retailResult.status === 'fulfilled' ? retailResult.value : null;
+    const wholesale = wholesaleResult.status === 'fulfilled' ? wholesaleResult.value : null;
+
+    return { retail, wholesale };
+  } catch (error) {
+    logger.error('Failed to fetch item prices from ERPNext', {
+      itemCode,
+      error: error.message,
+      status: error.response?.status,
+      stack: error.stack,
+    });
+    return { retail: null, wholesale: null };
+  }
+}
+
+/**
  * Fetch stock availability for an item from Bin API
  * Returns array of warehouse names where item has stock (actual_qty > 0)
  * @param {string} itemCode - The item code to fetch stock for
@@ -453,6 +564,7 @@ module.exports = {
   fetchProductQuery,
   fetchProductRaw,
   fetchPublishedWebsiteItems,
+  fetchItemPrices,
   fetchItemStock,
   downloadHeroImage,
   fetchHeroImages,

@@ -211,6 +211,60 @@ elif [ "${ENTITY_TYPE}" = "bundle" ]; then
     -H "Content-Type: application/json" \
     -d "{\"lastSync\":{\"bundle\":\"${LAST_ID}\"},\"entityTypes\":[\"bundle\"],\"limit\":100}"
 
+elif [ "${ENTITY_TYPE}" = "price" ]; then
+  # Price sync test flow
+  step "1) ERPNext ping via middleware"
+  curl -s "${BASE_URL}/api/erpnext/ping" | jq . || curl -s "${BASE_URL}/api/erpnext/ping"
+
+  step "2) Fetch a product to get item codes"
+  PRODUCT_RESPONSE=$(curl --globoff -s \
+    "${BASE_URL}/api/resource/Website%20Item?filters=[[\"name\",\"=\",\"${PRODUCT_NAME}\"]]")
+  echo "${PRODUCT_RESPONSE}" | jq . || echo "${PRODUCT_RESPONSE}"
+
+  # Extract first item code from variants (for testing)
+  ITEM_CODE=$(echo "${PRODUCT_RESPONSE}" | jq -r '.product.custom_variant // empty' 2>/dev/null | \
+    jq -r '.sizes[0].flavors[0].itemCode // empty' 2>/dev/null || echo "")
+
+  if [ -z "${ITEM_CODE}" ] || [ "${ITEM_CODE}" = "null" ]; then
+    echo "WARNING: Could not extract item code from product. Using a test item code."
+    ITEM_CODE="OL-EN-92-rng-1kg"
+  fi
+
+  echo "Using item code: ${ITEM_CODE}"
+
+  step "3) Fetch price for specific item code"
+  curl -s "${BASE_URL}/api/price/${ITEM_CODE}" | jq . || curl -s "${BASE_URL}/api/price/${ITEM_CODE}"
+
+  step "4) Trigger bulk price update (snapshot)"
+  curl -s -X POST "${BASE_URL}/api/price/update-all" | jq . || curl -s -X POST "${BASE_URL}/api/price/update-all"
+
+  step "5) Sync check (first call, expect updates)"
+  SYNC_RESPONSE=$(curl -s -X POST "${BASE_URL}/api/sync/check" \
+    -H "Content-Type: application/json" \
+    -d "{\"lastSync\":{},\"entityTypes\":[\"price\"],\"limit\":100}")
+
+  echo "${SYNC_RESPONSE}" | jq . || echo "${SYNC_RESPONSE}"
+
+  LAST_ID=$(echo "${SYNC_RESPONSE}" | jq -r '.lastIds.price_changes // .lastIds.price // empty' 2>/dev/null || true)
+
+  if [ -z "${LAST_ID}" ] || [ "${LAST_ID}" = "null" ]; then
+    echo
+    echo "WARNING: Could not extract lastIds.price from sync response."
+    echo "Skipping Step 6 (second sync check)."
+    exit 0
+  fi
+
+  echo
+  echo "Extracted last price stream ID: ${LAST_ID}"
+
+  step "6) Sync check (second call, expect inSync: true)"
+  curl -s -X POST "${BASE_URL}/api/sync/check" \
+    -H "Content-Type: application/json" \
+    -d "{\"lastSync\":{\"price\":\"${LAST_ID}\"},\"entityTypes\":[\"price\"],\"limit\":100}" \
+    | jq . || curl -s -X POST "${BASE_URL}/api/sync/check" \
+    -H "Content-Type: application/json" \
+    -d "{\"lastSync\":{\"price\":\"${LAST_ID}\"},\"entityTypes\":[\"price\"],\"limit\":100}"
+
 elif [ "${ENTITY_TYPE}" = "home" ]; then
   # Home sync test flow
   step "1) ERPNext ping via middleware"
@@ -327,7 +381,7 @@ elif [ "${ENTITY_TYPE}" = "products" ] || [ "${ENTITY_TYPE}" = "all-products" ];
 
 else
   echo "ERROR: Unknown entity type '${ENTITY_TYPE}'"
-  echo "Supported types: product, products (or all-products), stock, hero, home"
+  echo "Supported types: product, products (or all-products), stock, price, hero, bundle, home"
   exit 1
 fi
 

@@ -5,9 +5,9 @@ const {
   getCacheHash,
   incrementCacheHashVersion,
 } = require('../redis/cache');
-const { fetchPublishedWebsiteItems, fetchProduct, fetchItemStock, fetchHeroImages, fetchBundleImages, fetchAppHome } = require('../erpnext/client');
+const { fetchPublishedWebsiteItems, fetchProduct, fetchItemStock, fetchItemPrices, fetchHeroImages, fetchBundleImages, fetchAppHome } = require('../erpnext/client');
 const { transformProduct, transformHeroImages, transformBundleImages, transformAppHome } = require('../cache/transformer');
-const { fetchItemPrice } = require('../price/price');
+const { fetchItemPrice, updateItemPrice, parseCustomVariant } = require('../price/price');
 const { getWarehouseReferenceArray, buildAvailabilityArray } = require('../stock/stock');
 const { logger } = require('../logger');
 
@@ -137,11 +137,15 @@ async function refreshAllPrices() {
 
   try {
     const products = await fetchPublishedWebsiteItems();
-    const { parseCustomVariant, buildSizeIdentifier } = require('../price/price');
+    const { parseCustomVariant } = require('../price/price');
 
     logger.info('Starting full price refresh', {
       totalProducts: products.length,
     });
+
+    // Step 1: Collect all unique item codes from all products
+    const itemCodeSet = new Set();
+    const productItemMap = new Map(); // Track which products have which item codes for error reporting
 
     for (const product of products) {
       const { name: erpnextName, custom_variant } = product;
@@ -157,82 +161,159 @@ async function refreshAllPrices() {
         }
 
         for (const sizeData of parsedVariants) {
-          const { size, unit, flavors } = sizeData;
+          const { flavors } = sizeData;
 
-          if (!size || !unit || !flavors || flavors.length === 0) {
+          if (!flavors || !Array.isArray(flavors)) {
             continue;
           }
 
-          summary.total++;
+          for (const flavor of flavors) {
+            const itemCode = flavor.itemCode;
 
-          const sizeUnit = buildSizeIdentifier(size, unit);
-          const firstFlavor = flavors[0];
-          const itemCode = firstFlavor.itemCode;
-
-          if (!itemCode) {
-            continue;
-          }
-
-          // Fetch price from ERPNext
-          const price = await fetchItemPrice(itemCode);
-
-          if (price === null) {
-            summary.errors.push({
-              erpnextName,
-              sizeUnit,
-              error: 'Price not found',
-            });
-            continue;
-          }
-
-          const entityId = `${erpnextName}:${sizeUnit}`;
-          const priceData = { price, erpnextName, sizeUnit };
-
-          // Compute hash
-          const newHash = computeDataHash(priceData);
-
-          // Get existing cache
-          const existing = await getCacheHash('price', entityId);
-
-          // Check if changed
-          let version = '1';
-          let changed = false;
-
-          if (existing) {
-            if (existing.data_hash === newHash) {
-              summary.unchanged++;
+            if (!itemCode) {
               continue;
             }
-            version = await incrementCacheHashVersion('price', entityId);
-            if (!version) {
-              version = (parseInt(existing.version) + 1).toString();
+
+            // Deduplicate: only add if not already seen
+            if (!itemCodeSet.has(itemCode)) {
+              itemCodeSet.add(itemCode);
+              productItemMap.set(itemCode, erpnextName);
             }
           }
-
-          changed = true;
-
-          // Update cache
-          const updatedAt = Date.now().toString();
-          await setCacheHash('price', entityId, priceData, {
-            data_hash: newHash,
-            updated_at: updatedAt,
-            version,
-          });
-
-          // Also update simple key
-          const { setPrice } = require('../redis/cache');
-          await setPrice(erpnextName, sizeUnit, price);
-
-          // Add stream entry only if changed
-          await addStreamEntry('price', entityId, newHash, version);
-
-          summary.updated++;
         }
       } catch (error) {
         summary.errors.push({
           erpnextName,
-          error: error.message,
+          error: `Failed to parse variants: ${error.message}`,
         });
+      }
+    }
+
+    const uniqueItemCodes = Array.from(itemCodeSet);
+    summary.total = uniqueItemCodes.length;
+
+    logger.info('Collected unique item codes', {
+      totalProducts: products.length,
+      uniqueItemCodes: uniqueItemCodes.length,
+    });
+
+    // Step 2: Process items in parallel batches (10 at a time for performance)
+    const BATCH_SIZE = 10;
+    const batches = [];
+
+    for (let i = 0; i < uniqueItemCodes.length; i += BATCH_SIZE) {
+      batches.push(uniqueItemCodes.slice(i, i + BATCH_SIZE));
+    }
+
+    for (const batch of batches) {
+      // Process batch in parallel
+      const batchResults = await Promise.allSettled(
+        batch.map(async (itemCode) => {
+          try {
+            // Fetch prices from ERPNext
+            const { retail, wholesale } = await fetchItemPrices(itemCode);
+
+            // Build price array: [retail, wholesale] (use 0 if price not found)
+            const priceArray = [
+              retail !== null && retail !== undefined ? retail : 0,
+              wholesale !== null && wholesale !== undefined ? wholesale : 0,
+            ];
+
+            const priceData = { itemCode, prices: priceArray };
+
+            // Compute hash
+            const newHash = computeDataHash(priceData);
+
+            // Get existing cache (both hash cache and simple key for comparison)
+            const existing = await getCacheHash('price', itemCode);
+            const { getItemPrice } = require('../redis/cache');
+            const cachedPriceArray = await getItemPrice(itemCode);
+
+            // Check if changed
+            let version = '1';
+            let changed = false;
+
+            if (existing) {
+              // Compare hash first (fast check)
+              if (existing.data_hash === newHash) {
+                // Hash matches, but also check if actual Redis value differs (manual changes)
+                // Compare arrays element by element
+                const arraysMatch = 
+                  cachedPriceArray &&
+                  Array.isArray(cachedPriceArray) &&
+                  cachedPriceArray.length === priceArray.length &&
+                  cachedPriceArray.every((val, idx) => val === priceArray[idx]);
+
+                if (arraysMatch) {
+                  // Both hash and actual data match - no change
+                  return { itemCode, changed: false };
+                } else {
+                  // Hash matches but actual data differs - manual change detected
+                  logger.info('Manual Redis change detected for price', {
+                    itemCode,
+                    cachedHash: existing.data_hash,
+                    newHash,
+                    cachedPriceArray,
+                    newPriceArray: priceArray,
+                  });
+                  // Continue to update (changed = true)
+                }
+              }
+              
+              // Hash differs or manual change detected - increment version
+              version = await incrementCacheHashVersion('price', itemCode);
+              if (!version) {
+                version = (parseInt(existing.version) + 1).toString();
+              }
+            }
+
+            changed = true;
+
+            // Update cache
+            const updatedAt = Date.now().toString();
+            await setCacheHash('price', itemCode, priceData, {
+              data_hash: newHash,
+              updated_at: updatedAt,
+              version,
+            });
+
+            // Also update simple key
+            const { setItemPrice } = require('../redis/cache');
+            await setItemPrice(itemCode, priceArray);
+
+            // Add stream entry only if changed (important: app needs to know about any change)
+            const streamId = await addStreamEntry('price', itemCode, newHash, version);
+            logger.info('Price stream entry added in refresh', {
+              itemCode,
+              streamId,
+              hash: newHash,
+              version,
+            });
+
+            return { itemCode, changed: true };
+          } catch (error) {
+            throw { itemCode, error: error.message };
+          }
+        })
+      );
+
+      // Process batch results
+      for (const result of batchResults) {
+        if (result.status === 'fulfilled') {
+          if (result.value.changed) {
+            summary.updated++;
+          } else {
+            summary.unchanged++;
+          }
+        } else {
+          const { itemCode, error } = result.reason;
+          const erpnextName = productItemMap.get(itemCode) || 'unknown';
+          summary.errors.push({
+            itemCode,
+            erpnextName,
+            error,
+          });
+        }
       }
     }
 

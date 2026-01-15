@@ -1,7 +1,9 @@
-const { createErpnextClient } = require('../erpnext/client');
+const { createErpnextClient, fetchItemPrices } = require('../erpnext/client');
 const {
   getPrice,
   setPrice,
+  getItemPrice,
+  setItemPrice,
   setCacheHash,
   getCacheHash,
   incrementCacheHashVersion,
@@ -9,6 +11,138 @@ const {
 const { computeDataHash } = require('../sync/hash-computer');
 const { addStreamEntry } = require('../sync/stream-manager');
 const { logger } = require('../logger');
+
+/**
+ * Update price for a single item code
+ * Fetches retail and wholesale prices from ERPNext, builds price array, and caches it
+ * @param {string} itemCode - The item code to update
+ * @returns {Promise<Array<number>|null>} Price array [retail, wholesale] or null if failed
+ */
+async function updateItemPrice(itemCode) {
+  try {
+    // Fetch prices from ERPNext
+    const { retail, wholesale } = await fetchItemPrices(itemCode);
+
+    // Build price array: [retail, wholesale] (use 0 if price not found)
+    // Note: It's valid for an item to have no prices set up yet (both will be 0)
+    const priceArray = [
+      retail !== null && retail !== undefined ? retail : 0,
+      wholesale !== null && wholesale !== undefined ? wholesale : 0,
+    ];
+
+    logger.info('Fetched prices for item', {
+      itemCode,
+      retail,
+      wholesale,
+      priceArray,
+    });
+
+    // Prepare price data for hash computation
+    const priceData = { itemCode, prices: priceArray };
+
+    // Compute hash
+    const newHash = computeDataHash(priceData);
+
+    // Get existing cache (both hash cache and simple key for comparison)
+    const existing = await getCacheHash('price', itemCode);
+    const cachedPriceArray = await getItemPrice(itemCode);
+
+    // Check if changed
+    let version = '1';
+    let changed = true;
+
+    if (existing) {
+      // Compare hash first (fast check)
+      if (existing.data_hash === newHash) {
+        // Hash matches, but also check if actual Redis value differs (manual changes)
+        // Compare arrays element by element
+        const arraysMatch = 
+          cachedPriceArray &&
+          Array.isArray(cachedPriceArray) &&
+          cachedPriceArray.length === priceArray.length &&
+          cachedPriceArray.every((val, idx) => val === priceArray[idx]);
+
+        if (arraysMatch) {
+          // Both hash and actual data match - no change
+          changed = false;
+          logger.info('Price update: no change detected', {
+            itemCode,
+            hash: newHash,
+          });
+          // Still return the price array (for backward compatibility)
+          return priceArray;
+        } else {
+          // Hash matches but actual data differs - manual change detected
+          logger.info('Manual Redis change detected for price', {
+            itemCode,
+            cachedHash: existing.data_hash,
+            newHash,
+            cachedPriceArray,
+            newPriceArray: priceArray,
+          });
+          // Continue to update (changed = true)
+        }
+      }
+      
+      // Hash differs or manual change detected - increment version
+      version = await incrementCacheHashVersion('price', itemCode);
+      if (!version) {
+        version = (parseInt(existing.version) + 1).toString();
+      }
+    }
+
+    // Update cache hash with metadata (primary storage for sync)
+    const updatedAt = Date.now().toString();
+    const hashSuccess = await setCacheHash('price', itemCode, priceData, {
+      data_hash: newHash,
+      updated_at: updatedAt,
+      version,
+    });
+
+    if (!hashSuccess) {
+      logger.error('Failed to cache item price hash', { itemCode });
+      return null;
+    }
+
+    // Also cache as simple key for backward compatibility
+    await setItemPrice(itemCode, priceArray);
+
+    // Add stream entry if changed (important: app needs to know about any change)
+    if (changed) {
+      const streamId = await addStreamEntry('price', itemCode, newHash, version);
+      logger.info('Price stream entry added', {
+        itemCode,
+        streamId,
+        hash: newHash,
+        version,
+      });
+    } else {
+      logger.info('Price unchanged, no stream entry added', {
+        itemCode,
+        hash: newHash,
+      });
+    }
+
+    logger.info('Item price updated', {
+      itemCode,
+      retail,
+      wholesale,
+      priceArray,
+      changed,
+      version,
+      hash: newHash,
+    });
+    return priceArray;
+  } catch (error) {
+    logger.error('Failed to update item price', {
+      itemCode,
+      error: error.message,
+      stack: error.stack,
+      errorDetails: error,
+    });
+    return null;
+  }
+}
 
 /**
  * Fetch item price from ERPNext Item Price doctype
@@ -276,162 +410,158 @@ function parseCustomVariant(customVariantString) {
 
 /**
  * Update all prices for all published products
- * Fetches all published Website Items, parses variants, and updates prices
+ * Fetches all published Website Items, extracts unique item codes, and updates prices
+ * Follows same pattern as stock refresh: deduplicates item codes, processes in batches
  * @returns {Promise<Object>} Summary of update operation
  */
 async function updateAllPrices() {
   const { fetchPublishedWebsiteItems } = require('../erpnext/client');
 
   const summary = {
-    totalProductsFetched: 0,
-    productsWithVariants: 0,
+    total: 0,
     updated: 0,
-    failed: 0,
-    skipped: 0,
+    unchanged: 0,
     errors: [],
   };
 
   try {
-    // Fetch all published Website Items
     const products = await fetchPublishedWebsiteItems();
-    summary.totalProductsFetched = products.length;
 
     logger.info('Starting bulk price update', {
-      totalProductsFetched: products.length,
+      totalProducts: products.length,
     });
 
-    // Process each product
+    // Step 1: Collect all unique item codes from all products
+    const itemCodeSet = new Set();
+    const productItemMap = new Map(); // Track which products have which item codes for error reporting
+
     for (const product of products) {
       const { name: erpnextName, custom_variant } = product;
 
       if (!erpnextName) {
-        summary.skipped++;
-        summary.errors.push({
-          product: 'unknown',
-          error: 'Missing erpnext name',
-        });
         continue;
       }
 
       try {
-        // Parse custom_variant
         const parsedVariants = parseCustomVariant(custom_variant);
-
-        // Skip products without variants early
         if (!parsedVariants || parsedVariants.length === 0) {
-          summary.skipped++;
           continue;
         }
 
-        // Only count products that have variants
-        summary.productsWithVariants++;
-
-        // Process each size - only use first flavor's itemCode for price lookup
         for (const sizeData of parsedVariants) {
-          const { size, unit, flavors } = sizeData;
+          const { flavors } = sizeData;
 
-          // Skip invalid size data
-          if (!size || !unit) {
+          if (!flavors || !Array.isArray(flavors)) {
             continue;
           }
 
-          // Build size identifier
-          const sizeUnit = buildSizeIdentifier(size, unit);
+          for (const flavor of flavors) {
+            const itemCode = flavor.itemCode;
 
-          // Get first flavor's itemCode (only one price lookup per size)
-          if (!flavors || !Array.isArray(flavors) || flavors.length === 0) {
-            summary.failed++;
-            summary.errors.push({
-              product: erpnextName,
-              sizeUnit,
-              error: 'No flavors found for size',
-            });
-            continue;
-          }
-
-          const firstFlavor = flavors[0];
-          const itemCode = firstFlavor.itemCode;
-
-          if (!itemCode) {
-            summary.failed++;
-            summary.errors.push({
-              product: erpnextName,
-              sizeUnit,
-              error: 'No itemCode in first flavor',
-            });
-            continue;
-          }
-
-          // Fetch price from ERPNext using first flavor's itemCode only
-          const price = await fetchItemPrice(itemCode);
-
-          if (price !== null) {
-            // Store in Redis
-            const success = await setCachedPrice(erpnextName, sizeUnit, price);
-            if (success) {
-              summary.updated++;
-              logger.info('Price updated', {
-                erpnextName,
-                sizeUnit,
-                itemCode,
-                price,
-              });
-            } else {
-              summary.failed++;
-              summary.errors.push({
-                product: erpnextName,
-                sizeUnit,
-                error: 'Failed to cache price',
-              });
+            if (!itemCode) {
+              continue;
             }
-          } else {
-            summary.failed++;
-            summary.errors.push({
-              product: erpnextName,
-              sizeUnit,
-              itemCode,
-              error: 'Price not found in ERPNext',
-            });
+
+            // Deduplicate: only add if not already seen
+            if (!itemCodeSet.has(itemCode)) {
+              itemCodeSet.add(itemCode);
+              productItemMap.set(itemCode, erpnextName);
+            }
           }
         }
       } catch (error) {
-        summary.failed++;
         summary.errors.push({
-          product: erpnextName,
-          error: error.message,
-        });
-        logger.error('Error processing product', {
           erpnextName,
-          error: error.message,
+          error: `Failed to parse variants: ${error.message}`,
         });
       }
     }
 
-    logger.info('Bulk price update completed', {
-      totalProductsFetched: summary.totalProductsFetched,
-      productsWithVariants: summary.productsWithVariants,
-      updated: summary.updated,
-      failed: summary.failed,
-      skipped: summary.skipped,
+    const uniqueItemCodes = Array.from(itemCodeSet);
+    summary.total = uniqueItemCodes.length;
+
+    logger.info('Collected unique item codes', {
+      totalProducts: products.length,
+      uniqueItemCodes: uniqueItemCodes.length,
     });
+
+    // Step 2: Process items in parallel batches (10 at a time for performance)
+    const BATCH_SIZE = 10;
+    const batches = [];
+
+    for (let i = 0; i < uniqueItemCodes.length; i += BATCH_SIZE) {
+      batches.push(uniqueItemCodes.slice(i, i + BATCH_SIZE));
+    }
+
+    for (const batch of batches) {
+      // Process batch in parallel
+      const batchResults = await Promise.allSettled(
+        batch.map(async (itemCode) => {
+          try {
+            // Use updateItemPrice which handles hash-based change detection
+            const priceArray = await updateItemPrice(itemCode);
+            
+            if (priceArray === null) {
+              // Log the actual error for debugging
+              logger.error('updateItemPrice returned null', { itemCode });
+              throw new Error('updateItemPrice returned null - check logs for details');
+            }
+
+            // updateItemPrice returns the price array if successful (even if [0, 0])
+            // It handles hash comparison and stream entries internally
+            logger.info('Successfully updated price', { itemCode, priceArray });
+            return { itemCode, changed: true };
+          } catch (error) {
+            logger.error('Error in batch processing for item', {
+              itemCode,
+              error: error.message,
+              stack: error.stack,
+            });
+            throw { itemCode, error: error.message || String(error) };
+          }
+        })
+      );
+
+      // Process batch results
+      for (const result of batchResults) {
+        if (result.status === 'fulfilled') {
+          if (result.value.changed) {
+            summary.updated++;
+          } else {
+            summary.unchanged++;
+          }
+        } else {
+          const { itemCode, error } = result.reason;
+          const erpnextName = productItemMap.get(itemCode) || 'unknown';
+          summary.errors.push({
+            itemCode,
+            erpnextName,
+            error,
+          });
+        }
+      }
+    }
+
+    logger.info('Bulk price update completed', summary);
     return summary;
   } catch (error) {
     logger.error('Bulk price update failed', {
       error: error.message,
     });
-    summary.errors.push({
-      error: error.message,
-    });
+    summary.errors.push({ error: error.message });
     return summary;
   }
 }
 
 module.exports = {
   fetchItemPrice,
+  fetchItemPrices,
   getCachedPrice,
   setCachedPrice,
   getProductPrices,
+  updateItemPrice,
   updateAllPrices,
   buildSizeIdentifier,
+  parseCustomVariant,
 };
 

@@ -640,6 +640,97 @@ function ProductDetailScreen({ itemCode }) {
 
 ---
 
+### Fetching Item Prices
+
+**Endpoint:** `GET /api/price/:itemCode`
+
+**When to Call:** Only when product detail page opens, and only if cached data is older than refresh rate (e.g., 1 hour).
+
+**Example:**
+```javascript
+import AsyncStorage from '@react-native-async-storage/async-storage';
+
+const PRICE_CACHE_KEY = (itemCode) => `price_${itemCode}`;
+const REFRESH_RATE = 3600000; // 1 hour
+
+async function getItemPrice(itemCode) {
+  try {
+    // Check cache
+    const cached = await AsyncStorage.getItem(PRICE_CACHE_KEY(itemCode));
+    if (cached) {
+      const { data, timestamp } = JSON.parse(cached);
+      const now = Date.now();
+      
+      if (now - timestamp < REFRESH_RATE) {
+        return data; // Use cached data
+      }
+    }
+    
+    // Fetch from API
+    const response = await fetch(`${BASE_URL}/api/price/${itemCode}`);
+    const result = await response.json();
+    
+    if (result.success && result.prices) {
+      // Cache the data
+      await AsyncStorage.setItem(PRICE_CACHE_KEY(itemCode), JSON.stringify({
+        data: result.prices,
+        timestamp: Date.now()
+      }));
+      
+      return result.prices; // [retail, wholesale]
+    }
+    
+    throw new Error('Failed to fetch item price');
+  } catch (error) {
+    console.error('Error fetching item price:', error);
+    // Return cached data if available, even if expired
+    const cached = await AsyncStorage.getItem(PRICE_CACHE_KEY(itemCode));
+    if (cached) {
+      return JSON.parse(cached).data;
+    }
+    return [0, 0]; // Default: no prices
+  }
+}
+
+// Usage in React component
+function ProductDetailScreen({ itemCode }) {
+  const [prices, setPrices] = useState([0, 0]);
+  const [retail, wholesale] = prices;
+  
+  useEffect(() => {
+    getItemPrice(itemCode).then(setPrices);
+  }, [itemCode]);
+  
+  return (
+    <View>
+      <Text>Retail Price: ${retail}</Text>
+      <Text>Wholesale Price: ${wholesale}</Text>
+    </View>
+  );
+}
+```
+
+**Response Format:**
+```json
+{
+  "success": true,
+  "itemCode": "OL-EN-92-rng-1kg",
+  "prices": [29.99, 24.99]
+}
+```
+
+**Price Array Format:**
+- `prices[0]`: Retail price (Standard Selling)
+- `prices[1]`: Wholesale price (Wholesale Selling)
+- If a price doesn't exist, it will be `0`
+
+**Notes:**
+- Prices are fetched only when product detail page opens
+- Cache with timestamp to respect refresh rate (e.g., 1 hour)
+- Follow detail-page-driven caching strategy
+
+---
+
 ## Sync API Integration
 
 The sync API provides efficient incremental synchronization. See [SYNC_API.md](./SYNC_API.md) for complete documentation.
@@ -759,6 +850,12 @@ async function processUpdate(update) {
         console.log(`Stock ${entity_id} deleted - removed from cache`);
         break;
         
+      case 'price':
+        // Remove price data from local cache
+        await AsyncStorage.removeItem(PRICE_CACHE_KEY(entity_id));
+        console.log(`Price ${entity_id} deleted - removed from cache`);
+        break;
+        
       case 'hero':
         // Hero images are replaced, not deleted individually
         // Fetch fresh hero images
@@ -800,17 +897,27 @@ async function processUpdate(update) {
       );
       break;
       
-    case 'stock':
-      await AsyncStorage.setItem(
-        STOCK_CACHE_KEY(entity_id),
-        JSON.stringify({
-          data: {
-            itemCode: entity_id,
-            availability: data.availability
-          },
-          timestamp: Date.now()
-        })
-      );
+      case 'stock':
+        await AsyncStorage.setItem(
+          STOCK_CACHE_KEY(entity_id),
+          JSON.stringify({
+            data: {
+              itemCode: entity_id,
+              availability: data.availability
+            },
+            timestamp: Date.now()
+          })
+        );
+      break;
+      
+      case 'price':
+        await AsyncStorage.setItem(
+          PRICE_CACHE_KEY(entity_id),
+          JSON.stringify({
+            data: data.prices, // [retail, wholesale]
+            timestamp: Date.now()
+          })
+        );
       break;
   }
 }
@@ -903,6 +1010,7 @@ async function fetchWithErrorHandling(url, options = {}) {
   - Home page data: 1 hour
   - Product details: 1 hour
   - Stock availability: 1 hour
+  - Item prices: 1 hour
   - Warehouse reference: 30 days
 - **Fallback to cached data** - If API call fails, use cached data even if expired
 
@@ -1036,11 +1144,13 @@ import React, { useState, useEffect } from 'react';
 import { View, Text, ScrollView } from 'react-native';
 import { getProduct } from './api/product';
 import { getStockAvailability } from './api/stock';
+import { getItemPrice } from './api/price';
 
 function ProductDetailScreen({ route }) {
   const { erpnextName, itemCode } = route.params;
   const [product, setProduct] = useState(null);
   const [stockData, setStockData] = useState(null);
+  const [prices, setPrices] = useState([0, 0]);
   const [loading, setLoading] = useState(true);
   
   useEffect(() => {
@@ -1051,14 +1161,16 @@ function ProductDetailScreen({ route }) {
     try {
       setLoading(true);
       
-      // Fetch product and stock in parallel
-      const [productData, stock] = await Promise.all([
+      // Fetch product, stock, and price in parallel
+      const [productData, stock, priceArray] = await Promise.all([
         getProduct(erpnextName),
-        getStockAvailability(itemCode)
+        getStockAvailability(itemCode),
+        getItemPrice(itemCode)
       ]);
       
       setProduct(productData);
       setStockData(stock);
+      setPrices(priceArray || [0, 0]);
     } catch (error) {
       console.error('Error loading product:', error);
     } finally {
@@ -1074,10 +1186,18 @@ function ProductDetailScreen({ route }) {
     return <ErrorScreen message="Product not found" />;
   }
   
+  const [retail, wholesale] = prices;
+  
   return (
     <ScrollView>
       <Text>{product.item_name}</Text>
       <Text>{product.description}</Text>
+      
+      {/* Prices */}
+      <View>
+        <Text>Retail Price: ${retail}</Text>
+        {wholesale > 0 && <Text>Wholesale Price: ${wholesale}</Text>}
+      </View>
       
       {/* Stock Availability */}
       {stockData && (

@@ -376,6 +376,51 @@ Checks for updates on low-frequency entities (products, prices, hero list, bundl
 
 ---
 
+### Price
+
+**Entity Type:** `price`
+
+**Entity ID:** `{itemCode}` (e.g., `"OL-EN-92-rng-1kg"`)
+
+**Data Structure:**
+```typescript
+{
+  itemCode: string;
+  prices: [number, number]; // [retail_price, wholesale_price]
+}
+```
+
+**Price Array Format:**
+- First element: Retail price from "Standard Selling" price list
+- Second element: Wholesale price from "Wholesale Selling" price list
+- If a price doesn't exist in ERPNext, it will be `0`
+
+**Example Price Update:**
+```json
+{
+  "entity_type": "price",
+  "entity_id": "OL-EN-92-rng-1kg",
+  "data": {
+    "itemCode": "OL-EN-92-rng-1kg",
+    "prices": [29.99, 24.99]
+  },
+  "updated_at": "1768469419659",
+  "version": "1",
+  "data_hash": "a1b2c3d4e5f6...",
+  "idempotency_key": "uuid-123-456"
+}
+```
+
+**Notes:**
+- Prices are fetched from ERPNext Item Price doctype
+- Both retail and wholesale prices are fetched in parallel
+- Price updates are included in slow-frequency sync (`/api/sync/check-slow`)
+- Weekly snapshot processes all unique item codes from website item variants
+- Prices are stored as hash-based cache for sync compatibility
+- Prices are persistent (no TTL expiration)
+
+---
+
 ### Stock
 
 **Entity Type:** `stock`

@@ -386,6 +386,56 @@ async function setWarehouseReference(warehouseArray) {
 }
 
 /**
+ * Get item price array for an item_code
+ * Key format: price:{itemCode}
+ * Returns array [retail, wholesale] or null if not found
+ */
+async function getItemPrice(itemCode) {
+  try {
+    const redis = getRedisClient();
+    const key = `price:${itemCode}`;
+    const data = await redis.get(key);
+    
+    if (!data) {
+      return null;
+    }
+    
+    return JSON.parse(data);
+  } catch (error) {
+    logger.error('Item price get error', {
+      itemCode,
+      error: error.message,
+    });
+    return null;
+  }
+}
+
+/**
+ * Set item price array for an item_code
+ * Key format: price:{itemCode}
+ * No TTL - prices persist until updated
+ * Format: [retail_price, wholesale_price]
+ */
+async function setItemPrice(itemCode, priceArray) {
+  try {
+    const redis = getRedisClient();
+    const key = `price:${itemCode}`;
+    
+    // Store as JSON string
+    await redis.set(key, JSON.stringify(priceArray));
+    
+    return true;
+  } catch (error) {
+    logger.error('Item price set error', {
+      itemCode,
+      priceArray,
+      error: error.message,
+    });
+    return false;
+  }
+}
+
+/**
  * Set cached entity using Redis Hash structure with metadata
  * Stores data as JSON string in 'data' field, plus metadata fields
  * @param {string} entityType - Entity type (e.g., 'product', 'price', 'stock')
@@ -569,6 +619,8 @@ module.exports = {
   cacheExists,
   getPrice,
   setPrice,
+  getItemPrice,
+  setItemPrice,
   getStockAvailability,
   setStockAvailability,
   getWarehouseReference,

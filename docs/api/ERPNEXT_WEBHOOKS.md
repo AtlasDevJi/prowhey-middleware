@@ -7,6 +7,7 @@ This document provides instructions for configuring ERPNext to send webhooks to 
 The middleware provides a unified webhook endpoint that ERPNext can call to notify about changes to:
 - **Products** (Website Items)
 - **Stock Availability** (Item stock levels)
+- **Prices** (Item prices - uses weekly snapshot, no webhook needed)
 - **Hero Images** (File doctype with is_hero=1)
 - **Bundle Images** (File doctype with is_bundle=1)
 - **App Home** (App Home doctype)
@@ -356,7 +357,93 @@ Same as Product Update Webhook (see above).
 
 ---
 
-## 3. Hero Images Webhook
+## 3. Price Updates (Weekly Snapshot)
+
+**Important:** Prices use a **weekly snapshot approach** instead of webhooks. No webhook configuration is needed for prices.
+
+### Why Weekly Snapshot?
+
+Prices are refreshed automatically via a scheduled weekly full refresh that:
+- Fetches all item prices from ERPNext for all published products
+- Compares prices with cached data using hash comparison
+- Only updates cache and sync streams if prices have changed
+- Processes items in parallel batches for performance
+- Detects manual Redis changes and updates accordingly
+
+This approach is:
+- **Cleaner:** No need to configure webhooks for every price change
+- **Safer:** Avoids race conditions and ensures consistency
+- **Efficient:** Batch processing is more efficient than individual webhooks
+- **Reliable:** Weekly refresh ensures all prices are up-to-date
+
+### How It Works
+
+1. **Scheduled Refresh:** The middleware runs a full refresh weekly (configurable)
+2. **Price Fetching:** For each unique item code from website item variants:
+   - Fetches retail price from "Standard Selling" price list
+   - Fetches wholesale price from "Wholesale Selling" price list
+   - Stores as `[retail, wholesale]` array
+3. **Change Detection:** Compares hash of price data with cached data
+4. **Stream Updates:** Only adds stream entries if prices changed
+5. **Manual Change Detection:** Detects if Redis values were manually changed
+
+### Price Data Format
+
+**Storage Format:**
+- Hash key: `hash:price:{itemCode}` with structure:
+  ```json
+  {
+    "data": { "itemCode": "OL-EN-92-rng-1kg", "prices": [29.99, 24.99] },
+    "data_hash": "...",
+    "updated_at": "...",
+    "version": "1"
+  }
+  ```
+- Simple key: `price:{itemCode}` with array: `[retail, wholesale]`
+
+**Price Array:**
+- `[0]`: Retail price (Standard Selling price list)
+- `[1]`: Wholesale price (Wholesale Selling price list)
+- If a price doesn't exist, it will be `0`
+
+### Manual Refresh
+
+If you need to refresh prices immediately (outside of the weekly schedule), you can trigger a manual refresh:
+
+**Endpoint:** `POST /api/price/update-all`
+
+**Response:**
+```json
+{
+  "success": true,
+  "total": 150,
+  "updated": 5,
+  "unchanged": 145,
+  "errors": []
+}
+```
+
+### Sync API
+
+Price changes are automatically tracked in the `price_changes` stream. Frontend apps can use the sync API to get price updates:
+
+- **Fast frequency:** Prices are included in slow-frequency sync checks
+- **Stream entries:** Created only when prices actually change
+- **Manual changes:** Detected and streamed to apps
+
+See [SYNC_API.md](./SYNC_API.md) for details on consuming price updates via the sync API.
+
+### Important Notes
+
+- **No Webhook Needed:** Prices are automatically refreshed weekly
+- **Change Detection:** Only changed prices create stream entries
+- **Manual Refresh:** Use `/api/price/update-all` endpoint if immediate refresh is needed
+- **Price Lists:** Uses "Standard Selling" for retail and "Wholesale Selling" for wholesale
+- **Item Codes:** Processes all unique item codes from all website item variants
+
+---
+
+## 4. Hero Images Webhook
 
 Trigger this webhook when a **File** with `is_hero = 1` is created, updated, or when the `is_hero` field changes in ERPNext.
 
@@ -463,7 +550,7 @@ Content-Type: application/json
 
 ---
 
-## 4. Bundle Images Webhook
+## 5. Bundle Images Webhook
 
 Trigger this webhook when a **File** with `is_bundle = 1` is created, updated, or when the `is_bundle` field changes in ERPNext.
 
@@ -570,7 +657,7 @@ Content-Type: application/json
 
 ---
 
-## 5. App Home Webhook
+## 6. App Home Webhook
 
 Trigger this webhook when an **App Home** record is created, updated, or submitted in ERPNext.
 
@@ -721,9 +808,12 @@ ERPNext webhooks have built-in retry mechanisms. If a webhook fails:
 
 - **Product Updates:** Trigger on `on_submit` or `on_update` to ensure data is finalized
 - **Stock Updates:** Trigger on `on_submit` to ensure stock transactions are committed
+- **Price Updates:** Uses weekly snapshot (no webhook needed) - prices are refreshed automatically via scheduled full refresh
 - **Hero Images:** Trigger on `on_update` when `is_hero` field changes
 - **Bundle Images:** Trigger on `on_update` when `is_bundle` field changes
 - **App Home:** Trigger on `on_submit` or `on_update` to ensure data is finalized
+
+**Note:** Prices use a weekly snapshot approach instead of webhooks for cleaner and safer operation. The middleware automatically fetches all prices during the weekly full refresh, comparing with cached data and only updating if changes are detected.
 
 ### 2. Avoiding Duplicate Webhooks
 

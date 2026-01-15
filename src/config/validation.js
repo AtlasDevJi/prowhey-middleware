@@ -72,15 +72,10 @@ const webhookErpnextSchema = z
     entity_type: z.enum(['product', 'price', 'stock', 'hero', 'bundle', 'home']),
     // Product fields
     erpnextName: erpnextNameSchema.optional(),
-    // Price fields
-    sizeUnit: sizeUnitSchema.optional(),
-    price: z
-      .number()
-      .positive('Price must be positive')
-      .max(999999.99, 'Price exceeds maximum value')
-      .optional(),
-    // Stock fields
+    // Price fields (uses itemCode, fetches prices from ERPNext)
     itemCode: itemCodeSchema.optional(),
+    // Stock fields
+    // (itemCode is shared between price and stock)
   })
   .refine(
     (data) => {
@@ -88,9 +83,9 @@ const webhookErpnextSchema = z
       if (data.entity_type === 'product') {
         return !!data.erpnextName;
       }
-      // Price requires erpnextName, sizeUnit, price
+      // Price requires itemCode only (prices fetched from ERPNext)
       if (data.entity_type === 'price') {
-        return !!(data.erpnextName && data.sizeUnit && data.price !== undefined);
+        return !!data.itemCode;
       }
       // Stock requires itemCode only (availability fetched from ERPNext)
       if (data.entity_type === 'stock') {

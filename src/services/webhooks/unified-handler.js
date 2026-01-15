@@ -102,42 +102,75 @@ async function processProductWebhook(erpnextName) {
 
 /**
  * Process webhook for price entity
- * Updates price cache, computes hash, adds stream entry if changed
- * @param {string} erpnextName - ERPNext name field
- * @param {string} sizeUnit - Size identifier (e.g., "5lb")
- * @param {number} price - Price value
+ * Fetches prices from ERPNext for a specific item code, computes hash, adds stream entry if changed
+ * @param {string} itemCode - Item code (e.g., "OL-EN-92-rng-1kg")
  * @returns {Promise<object>} Result object with {changed: boolean, version: string, streamId: string|null}
  */
-async function processPriceWebhook(erpnextName, sizeUnit, price) {
+async function processPriceWebhook(itemCode) {
   try {
-    const entityId = `${erpnextName}:${sizeUnit}`;
-    const priceData = { price, erpnextName, sizeUnit };
+    // Fetch prices from ERPNext (retail and wholesale)
+    const { fetchItemPrices } = require('../erpnext/client');
+    const { getItemPrice, setItemPrice } = require('../redis/cache');
+    
+    const { retail, wholesale } = await fetchItemPrices(itemCode);
+
+    // Build price array: [retail, wholesale] (use 0 if price not found)
+    const priceArray = [
+      retail !== null && retail !== undefined ? retail : 0,
+      wholesale !== null && wholesale !== undefined ? wholesale : 0,
+    ];
+
+    const priceData = { itemCode, prices: priceArray };
 
     // Compute hash
     const newHash = computeDataHash(priceData);
 
-    // Get existing cache
-    const existing = await getCacheHash('price', entityId);
+    // Get existing cache (both hash cache and simple key for comparison)
+    const existing = await getCacheHash('price', itemCode);
+    const cachedPriceArray = await getItemPrice(itemCode);
 
     // Check if changed
     let version = '1';
     let changed = true;
 
     if (existing) {
+      // Compare hash first (fast check)
       if (existing.data_hash === newHash) {
-        changed = false;
-        logger.info('Price webhook: no change detected', {
-          erpnextName,
-          sizeUnit,
-          hash: newHash,
-        });
-        return {
-          changed: false,
-          version: existing.version,
-          streamId: null,
-        };
+        // Hash matches, but also check if actual Redis value differs (manual changes)
+        // Compare arrays element by element
+        const arraysMatch = 
+          cachedPriceArray &&
+          Array.isArray(cachedPriceArray) &&
+          cachedPriceArray.length === priceArray.length &&
+          cachedPriceArray.every((val, idx) => val === priceArray[idx]);
+
+        if (arraysMatch) {
+          // Both hash and actual data match - no change
+          changed = false;
+          logger.info('Price webhook: no change detected', {
+            itemCode,
+            hash: newHash,
+          });
+          return {
+            changed: false,
+            version: existing.version,
+            streamId: null,
+          };
+        } else {
+          // Hash matches but actual data differs - manual change detected
+          logger.info('Manual Redis change detected for price in webhook', {
+            itemCode,
+            cachedHash: existing.data_hash,
+            newHash,
+            cachedPriceArray,
+            newPriceArray: priceArray,
+          });
+          // Continue to update (changed = true)
+        }
       }
-      version = await incrementCacheHashVersion('price', entityId);
+      
+      // Hash differs or manual change detected - increment version
+      version = await incrementCacheHashVersion('price', itemCode);
       if (!version) {
         version = (parseInt(existing.version) + 1).toString();
       }
@@ -145,7 +178,7 @@ async function processPriceWebhook(erpnextName, sizeUnit, price) {
 
     // Update cache
     const updatedAt = Date.now().toString();
-    const success = await setCacheHash('price', entityId, priceData, {
+    const success = await setCacheHash('price', itemCode, priceData, {
       data_hash: newHash,
       updated_at: updatedAt,
       version,
@@ -156,16 +189,16 @@ async function processPriceWebhook(erpnextName, sizeUnit, price) {
     }
 
     // Also update simple key for backward compatibility
-    const { setPrice } = require('../redis/cache');
-    await setPrice(erpnextName, sizeUnit, price);
+    await setItemPrice(itemCode, priceArray);
 
-    // Add stream entry
-    const streamId = await addStreamEntry('price', entityId, newHash, version);
+    // Add stream entry if changed
+    const streamId = await addStreamEntry('price', itemCode, newHash, version);
 
     logger.info('Price webhook processed', {
-      erpnextName,
-      sizeUnit,
-      price,
+      itemCode,
+      retail,
+      wholesale,
+      priceArray,
       changed,
       version,
       streamId,
@@ -178,9 +211,9 @@ async function processPriceWebhook(erpnextName, sizeUnit, price) {
     };
   } catch (error) {
     logger.error('Price webhook processing error', {
-      erpnextName,
-      sizeUnit,
+      itemCode,
       error: error.message,
+      stack: error.stack,
     });
     throw error;
   }
@@ -581,11 +614,11 @@ async function processWebhook(entityType, payload) {
       }
 
       case 'price': {
-        const { erpnextName, sizeUnit, price } = payload;
-        if (!erpnextName || !sizeUnit || price === undefined) {
-          throw new Error('erpnextName, sizeUnit, and price required for price webhook');
+        const { itemCode } = payload;
+        if (!itemCode) {
+          throw new Error('itemCode required for price webhook');
         }
-        return await processPriceWebhook(erpnextName, sizeUnit, price);
+        return await processPriceWebhook(itemCode);
       }
 
       case 'stock': {
