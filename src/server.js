@@ -132,6 +132,10 @@ app.use('/api/security', securityRoutes);
 const authRoutes = require('./routes/auth');
 app.use('/api/auth', authRoutes);
 
+// Users routes (for anonymous users and device info)
+const usersRoutes = require('./routes/users');
+app.use('/api/users', resourceRateLimiter, usersRoutes);
+
 // Sync routes
 const syncRoutes = require('./routes/sync');
 app.use('/api/sync', resourceRateLimiter, syncRoutes);

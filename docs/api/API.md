@@ -328,6 +328,8 @@ X-Device-ID: device-123
       "email": "john@example.com",
       "username": "johndoe",
       "phone": "+1234567890",
+      "erpnextCustomerId": "CUST-001",
+      "approvedCustomer": true,
       "isVerified": true,
       "createdAt": "2025-01-15T10:00:00.000Z",
       "lastLogin": "2025-01-15T10:30:00.000Z"
@@ -357,6 +359,8 @@ Update user profile (username, email, phone). Requires password confirmation han
 | `username` | string | No | New username (3-32 chars) |
 | `email` | string | No | New email address |
 | `phone` | string | No | New phone number (E.164 format) |
+| `erpnext_customer_id` | string | No | ERPNext customer ID (set from admin/Redis) |
+| `approved_customer` | boolean | No | Whether customer is approved for orders |
 | `passwordConfirmed` | boolean | Yes | Must be `true` (app verifies password client-side) |
 
 **Note:** If email is changed, user must verify new email with OTP.
@@ -386,6 +390,8 @@ X-Device-ID: device-123
       "email": "john@example.com",
       "username": "newusername",
       "phone": "+1234567890",
+      "erpnextCustomerId": "CUST-001",
+      "approvedCustomer": true,
       "isVerified": true
     }
   }

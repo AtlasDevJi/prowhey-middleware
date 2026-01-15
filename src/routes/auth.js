@@ -3,13 +3,26 @@ const router = express.Router();
 const { hashPassword, verifyPassword } = require('../services/auth/password');
 const {
   createUser,
+  createAnonymousUser,
   getUserByEmail,
   getUserByUsername,
   getUserByGoogleId,
+  getUserByDeviceId,
+  getUserByPhone,
+  checkDisabledAccount,
   updateUser,
+  updateDeviceInfo,
+  updateGeolocation,
+  updateIdVerification,
+  updatePhoneVerification,
+  addFraudFlag,
+  updateTrustScore,
   softDeleteUser,
   emailExists,
   usernameExists,
+  normalizeUsername,
+  normalizeEmail,
+  generateUserId,
 } = require('../services/auth/user-storage');
 const {
   sendVerificationCode,
@@ -40,6 +53,9 @@ const {
   updateProfileRequestSchema,
   changePasswordRequestSchema,
   verifyEmailRequestSchema,
+  anonymousUserRequestSchema,
+  deviceInfoRequestSchema,
+  geolocationUpdateRequestSchema,
 } = require('../config/validation');
 const { handleAsyncErrors } = require('../utils/error-utils');
 const {
@@ -71,8 +87,27 @@ router.post(
   authRateLimiter,
   validateRequest(signupRequestSchema),
   handleAsyncErrors(async (req, res) => {
-    const { username, email, password, phone, verificationMethod, deviceId, googleId } =
-      req.validatedBody;
+    const { 
+      username, 
+      email, 
+      password, 
+      phone, 
+      verificationMethod, 
+      deviceId, 
+      googleId,
+      province,
+      city,
+      whatsapp_number,
+      telegram_username,
+      avatar,
+      geolocation,
+      location_consent,
+      customer_type,
+      device_model,
+      os_model,
+      erpnext_customer_id,
+      approved_customer,
+    } = req.validatedBody;
 
     // Check if email or phone is provided
     if (!email && !phone) {
@@ -89,6 +124,45 @@ router.post(
       throw new ConflictError('Email already registered');
     }
 
+    // Check for disabled account with same device/phone (prevent re-registration)
+    const disabledAccount = await checkDisabledAccount(deviceId, phone);
+    if (disabledAccount) {
+      SecurityLogger.logAuthAttempt(
+        disabledAccount.id,
+        disabledAccount.email,
+        false,
+        'Attempted re-registration with disabled account'
+      );
+      throw new ConflictError('An account with this device or phone number was previously disabled. Please contact support.');
+    }
+
+    // Check if deviceId has an existing anonymous user
+    let existingAnonymousUser = null;
+    if (deviceId) {
+      existingAnonymousUser = await getUserByDeviceId(deviceId);
+      if (existingAnonymousUser && existingAnonymousUser.isRegistered) {
+        // Device already has a registered user - this shouldn't happen, but handle gracefully
+        throw new ConflictError('Device already associated with a registered account');
+      }
+      // Check if anonymous user is disabled
+      if (existingAnonymousUser && existingAnonymousUser.accountStatus === 'disabled') {
+        throw new ConflictError('This device is associated with a disabled account. Please contact support.');
+      }
+    }
+    
+    // Check if phone number is already registered (including disabled accounts)
+    if (phone) {
+      const existingUserByPhone = await getUserByPhone(phone);
+      if (existingUserByPhone) {
+        if (existingUserByPhone.accountStatus === 'disabled') {
+          throw new ConflictError('This phone number is associated with a disabled account. Please contact support.');
+        }
+        if (existingUserByPhone.isRegistered && existingUserByPhone.id !== existingAnonymousUser?.id) {
+          throw new ConflictError('Phone number already registered');
+        }
+      }
+    }
+
     // Hash password (if not Google OAuth)
     let passwordHash = null;
     if (!googleId && password) {
@@ -99,17 +173,77 @@ router.post(
     const method = verificationMethod || (phone ? 'sms' : null);
     const needsVerification = !googleId && (phone || email);
 
-    // Create user
-    const user = await createUser({
-      username,
-      email: email || null,
-      passwordHash,
-      phone: phone || null,
-      googleId: googleId || null,
-      isVerified: !needsVerification, // Google OAuth users are auto-verified
-      verificationMethod: method,
-      deviceId,
-    });
+    let user;
+    
+    // If anonymous user exists, convert to registered
+    if (existingAnonymousUser) {
+      // Update existing user to registered status
+      user = await updateUser(existingAnonymousUser.id, {
+        isRegistered: true,
+        username: normalizeUsername(username),
+        email: normalizeEmail(email),
+        passwordHash,
+        phone: phone || null,
+        googleId: googleId || null,
+        isVerified: !needsVerification,
+        verificationMethod: method,
+        status: !needsVerification ? 'active' : 'pending_verification',
+        // Preserve existing device info and geolocation
+        deviceModel: device_model || existingAnonymousUser.deviceModel,
+        osModel: os_model || existingAnonymousUser.osModel,
+        geolocation: (location_consent && geolocation) ? geolocation : existingAnonymousUser.geolocation,
+        locationConsent: location_consent !== undefined ? location_consent : existingAnonymousUser.locationConsent,
+        locationConsentTimestamp: location_consent ? new Date().toISOString() : existingAnonymousUser.locationConsentTimestamp,
+        // Add new profile fields
+        firstName: first_name || existingAnonymousUser.firstName,
+        surname: surname || existingAnonymousUser.surname,
+        age: age !== undefined ? age : existingAnonymousUser.age,
+        occupation: occupation || existingAnonymousUser.occupation,
+        fitnessLevel: fitness_level || existingAnonymousUser.fitnessLevel,
+        gender: gender || existingAnonymousUser.gender,
+        fitnessGoal: fitness_goal || existingAnonymousUser.fitnessGoal,
+        province: province || existingAnonymousUser.province,
+        city: city || existingAnonymousUser.city,
+        whatsappNumber: whatsapp_number || existingAnonymousUser.whatsappNumber,
+        telegramUsername: telegram_username || existingAnonymousUser.telegramUsername,
+        avatar: avatar || existingAnonymousUser.avatar,
+        customerType: customer_type || existingAnonymousUser.customerType || 'retail',
+        erpnextCustomerId: erpnext_customer_id || existingAnonymousUser.erpnextCustomerId,
+        approvedCustomer: approved_customer !== undefined ? approved_customer : (existingAnonymousUser.approvedCustomer || false),
+        region: geolocation?.province || geolocation?.city || province || city || existingAnonymousUser.region,
+      });
+    } else {
+      // Create new registered user
+      user = await createUser({
+        username,
+        email: email || null,
+        passwordHash,
+        phone: phone || null,
+        googleId: googleId || null,
+        isVerified: !needsVerification,
+        verificationMethod: method,
+        deviceId,
+        firstName: first_name,
+        surname,
+        age,
+        occupation,
+        fitnessLevel: fitness_level,
+        gender,
+        fitnessGoal: fitness_goal,
+        province,
+        city,
+        whatsappNumber: whatsapp_number,
+        telegramUsername: telegram_username,
+        avatar,
+        geolocation: location_consent && geolocation ? geolocation : null,
+        locationConsent: location_consent || false,
+        customerType: customer_type || 'retail',
+        erpnextCustomerId: erpnext_customer_id,
+        approvedCustomer: approved_customer || false,
+        deviceModel: device_model,
+        osModel: os_model,
+      });
+    }
 
     // Send verification code if needed
     if (needsVerification && phone && method) {
@@ -239,6 +373,12 @@ router.post(
       }
     }
 
+    // Check if account is disabled or suspended
+    if (user.accountStatus === 'disabled' || user.accountStatus === 'suspended') {
+      SecurityLogger.logAuthAttempt(user.id, user.email, false, `Login attempt on ${user.accountStatus} account`);
+      throw new UnauthorizedError(`Account is ${user.accountStatus}. Please contact support.`);
+    }
+
     // Check if verified
     if (!user.isVerified) {
       SecurityLogger.logAuthAttempt(user.id, user.email, false, 'Account not verified');
@@ -248,8 +388,13 @@ router.post(
     // Log successful authentication
     SecurityLogger.logAuthAttempt(user.id, user.email, true);
 
-    // Update last login
-    await updateUser(user.id, { lastLogin: new Date().toISOString() });
+    // Update last login and device info if provided in headers
+    const deviceModel = req.headers['x-device-model'];
+    const osModel = req.headers['x-os-model'];
+    const updates = { lastLogin: new Date().toISOString() };
+    if (deviceModel) updates.deviceModel = deviceModel;
+    if (osModel) updates.osModel = osModel;
+    await updateUser(user.id, updates);
 
     // Generate tokens
     const payload = {
@@ -283,7 +428,9 @@ router.post(
   authRateLimiter,
   validateRequest(googleLoginRequestSchema),
   handleAsyncErrors(async (req, res) => {
-    const { email, googleId, deviceId } = req.validatedBody;
+    const { email, googleId, deviceId, name } = req.validatedBody;
+    const deviceModel = req.headers['x-device-model'];
+    const osModel = req.headers['x-os-model'];
 
     // Check if user exists
     let user = await getUserByGoogleId(googleId);
@@ -293,22 +440,61 @@ router.post(
 
     // Create user if new
     if (!user) {
-      user = await createUser({
-        username: email.split('@')[0], // Use email prefix as username
-        email,
-        passwordHash: null, // No password for Google OAuth
-        googleId,
-        isVerified: true, // Google OAuth users are auto-verified
-        verificationMethod: 'google',
-        deviceId,
-      });
+      // Check if deviceId has an existing anonymous user
+      let existingAnonymousUser = null;
+      if (deviceId) {
+        existingAnonymousUser = await getUserByDeviceId(deviceId);
+        if (existingAnonymousUser && existingAnonymousUser.isRegistered) {
+          // Device already has a registered user - shouldn't happen, but handle gracefully
+          throw new ConflictError('Device already associated with a registered account');
+        }
+      }
+
+      // If anonymous user exists, convert to registered
+      if (existingAnonymousUser) {
+        user = await updateUser(existingAnonymousUser.id, {
+          isRegistered: true,
+          username: normalizeUsername(name || email?.split('@')[0] || `user_${existingAnonymousUser.id.substring(0, 8)}`),
+          email: normalizeEmail(email),
+          passwordHash: null,
+          googleId,
+          isVerified: true,
+          verificationMethod: 'google',
+          status: 'active',
+          deviceModel: deviceModel || existingAnonymousUser.deviceModel,
+          osModel: osModel || existingAnonymousUser.osModel,
+          // Preserve existing geolocation and other data
+        });
+      } else {
+        // Create new user
+        user = await createUser({
+          username: normalizeUsername(name || email?.split('@')[0] || `user_${generateUserId().substring(0, 8)}`),
+          email,
+          passwordHash: null, // No password for Google OAuth
+          googleId,
+          isVerified: true, // Google OAuth users are auto-verified
+          verificationMethod: 'google',
+          deviceId,
+          deviceModel,
+          osModel,
+        });
+      }
     } else if (!user.googleId) {
       // Link Google ID to existing user
       user = await updateUser(user.id, { googleId });
     }
 
-    // Update last login
-    await updateUser(user.id, { lastLogin: new Date().toISOString() });
+    // Update last login and device info if provided
+    const updates = { lastLogin: new Date().toISOString() };
+    if (deviceModel) updates.deviceModel = deviceModel;
+    if (osModel) updates.osModel = osModel;
+    if (deviceId && deviceId !== user.deviceId) {
+      updates.deviceId = deviceId;
+    }
+    if (deviceId && deviceId !== user.deviceId) {
+      updates.deviceId = deviceId;
+    }
+    await updateUser(user.id, updates);
 
     // Generate tokens
     const payload = {
@@ -472,9 +658,33 @@ router.get(
           email: req.user.email,
           username: req.user.username,
           phone: req.user.phone,
+          firstName: req.user.firstName,
+          surname: req.user.surname,
+          age: req.user.age,
+          occupation: req.user.occupation,
+          fitnessLevel: req.user.fitnessLevel,
+          gender: req.user.gender,
+          fitnessGoal: req.user.fitnessGoal,
+          province: req.user.province,
+          city: req.user.city,
+          whatsappNumber: req.user.whatsappNumber,
+          telegramUsername: req.user.telegramUsername,
+          avatar: req.user.avatar,
+          deviceModel: req.user.deviceModel,
+          osModel: req.user.osModel,
+          geolocation: req.user.geolocation,
+          locationConsent: req.user.locationConsent,
+          customerType: req.user.customerType,
+          erpnextCustomerId: req.user.erpnextCustomerId,
+          approvedCustomer: req.user.approvedCustomer || false,
           isVerified: req.user.isVerified,
+          idVerified: req.user.idVerified || false,
+          phoneVerified: req.user.phoneVerified || false,
+          accountStatus: req.user.accountStatus || 'active',
+          trustScore: req.user.trustScore || 100,
           createdAt: req.user.createdAt,
           lastLogin: req.user.lastLogin,
+          isRegistered: req.user.isRegistered,
         },
       },
     });
@@ -490,7 +700,23 @@ router.put(
   authenticate,
   validateRequest(updateProfileRequestSchema),
   handleAsyncErrors(async (req, res) => {
-    const { username, email, phone } = req.validatedBody;
+    const { 
+      username, 
+      email, 
+      phone,
+      province,
+      city,
+      whatsapp_number,
+      telegram_username,
+      avatar,
+      geolocation,
+      location_consent,
+      customer_type,
+      device_model,
+      os_model,
+      erpnext_customer_id,
+      approved_customer,
+    } = req.validatedBody;
     const userId = req.userId;
 
     // Check if username is being changed and if it's available
@@ -506,11 +732,41 @@ router.put(
         throw new ConflictError('Email already registered');
       }
     }
-
-    // Prepare updates
+    
+    // Prepare updates object
     const updates = {};
-    if (username) updates.username = username;
-    if (phone) updates.phone = phone;
+    if (username !== undefined) updates.username = username;
+    if (email !== undefined) updates.email = email;
+    if (phone !== undefined) updates.phone = phone;
+    if (first_name !== undefined) updates.firstName = first_name;
+    if (surname !== undefined) updates.surname = surname;
+    if (age !== undefined) updates.age = age;
+    if (occupation !== undefined) updates.occupation = occupation;
+    if (fitness_level !== undefined) updates.fitnessLevel = fitness_level;
+    if (gender !== undefined) updates.gender = gender;
+    if (fitness_goal !== undefined) updates.fitnessGoal = fitness_goal;
+    if (province !== undefined) updates.province = province;
+    if (city !== undefined) updates.city = city;
+    if (whatsapp_number !== undefined) updates.whatsappNumber = whatsapp_number;
+    if (telegram_username !== undefined) updates.telegramUsername = telegram_username;
+    if (avatar !== undefined) updates.avatar = avatar;
+    if (customer_type !== undefined) updates.customerType = customer_type;
+    if (erpnext_customer_id !== undefined) updates.erpnextCustomerId = erpnext_customer_id;
+    if (approved_customer !== undefined) updates.approvedCustomer = approved_customer;
+    if (device_model !== undefined) updates.deviceModel = device_model;
+    if (os_model !== undefined) updates.osModel = os_model;
+    
+    // Handle geolocation update separately (it has its own function)
+    if (geolocation !== undefined || location_consent !== undefined) {
+      const currentConsent = location_consent !== undefined ? location_consent : req.user.locationConsent;
+      const currentGeolocation = geolocation || req.user.geolocation;
+      await updateGeolocation(userId, currentGeolocation, currentConsent);
+    }
+    
+    // Update other fields
+    if (Object.keys(updates).length > 0) {
+      await updateUser(userId, updates);
+    }
 
     // Handle email change (requires verification)
     if (email && email !== req.user.email) {
@@ -537,8 +793,8 @@ router.put(
       });
     }
 
-    // Update profile (no email change)
-    const updatedUser = await updateUser(userId, updates);
+    // Get updated user (after all updates)
+    const updatedUser = await getUserById(userId);
 
     return res.json({
       success: true,
@@ -548,7 +804,31 @@ router.put(
           email: updatedUser.email,
           username: updatedUser.username,
           phone: updatedUser.phone,
+          firstName: updatedUser.firstName,
+          surname: updatedUser.surname,
+          age: updatedUser.age,
+          occupation: updatedUser.occupation,
+          fitnessLevel: updatedUser.fitnessLevel,
+          gender: updatedUser.gender,
+          fitnessGoal: updatedUser.fitnessGoal,
+          province: updatedUser.province,
+          city: updatedUser.city,
+          whatsappNumber: updatedUser.whatsappNumber,
+          telegramUsername: updatedUser.telegramUsername,
+          avatar: updatedUser.avatar,
+          deviceModel: updatedUser.deviceModel,
+          osModel: updatedUser.osModel,
+          geolocation: updatedUser.geolocation,
+          locationConsent: updatedUser.locationConsent,
+          customerType: updatedUser.customerType,
+          erpnextCustomerId: updatedUser.erpnextCustomerId,
+          approvedCustomer: updatedUser.approvedCustomer || false,
           isVerified: updatedUser.isVerified,
+          idVerified: updatedUser.idVerified || false,
+          phoneVerified: updatedUser.phoneVerified || false,
+          accountStatus: updatedUser.accountStatus || 'active',
+          trustScore: updatedUser.trustScore || 100,
+          isRegistered: updatedUser.isRegistered,
         },
       },
     });
@@ -631,15 +911,20 @@ router.put(
 
 /**
  * DELETE /api/auth/account
- * Delete account (requires authentication, soft delete)
+ * Delete account (requires authentication, marks as disabled)
+ * Account is marked as disabled but device/phone indexes are kept to prevent re-registration
  */
 router.delete(
   '/account',
   authenticate,
   handleAsyncErrors(async (req, res) => {
     const userId = req.userId;
+    const user = req.user;
 
-    // Soft delete user
+    // Log account deletion
+    SecurityLogger.logAuthAttempt(userId, user.email, false, 'Account deletion requested');
+
+    // Soft delete user (marks as disabled)
     const success = await softDeleteUser(userId);
     if (!success) {
       throw new InternalServerError('Failed to delete account');
@@ -647,7 +932,67 @@ router.delete(
 
     return res.json({
       success: true,
-      message: 'Account deleted successfully',
+      message: 'Account deleted successfully. You will not be able to register again with the same device or phone number.',
+    });
+  })
+);
+
+/**
+ * POST /api/auth/verify-id
+ * Verify user ID (for credit/trust purposes)
+ * Requires authentication
+ */
+router.post(
+  '/verify-id',
+  authenticate,
+  handleAsyncErrors(async (req, res) => {
+    const userId = req.userId;
+    const { verified } = req.body; // Admin/verification system sets this
+
+    if (typeof verified !== 'boolean') {
+      throw new ValidationError('verified field must be a boolean');
+    }
+
+    const updatedUser = await updateIdVerification(userId, verified);
+
+    return res.json({
+      success: true,
+      message: verified ? 'ID verified successfully' : 'ID verification removed',
+      data: {
+        user: {
+          id: updatedUser.id,
+          idVerified: updatedUser.idVerified,
+          idVerifiedAt: updatedUser.idVerifiedAt,
+          trustScore: updatedUser.trustScore,
+        },
+      },
+    });
+  })
+);
+
+/**
+ * POST /api/auth/verify-phone
+ * Mark phone as verified
+ * Requires authentication
+ */
+router.post(
+  '/verify-phone',
+  authenticate,
+  handleAsyncErrors(async (req, res) => {
+    const userId = req.userId;
+
+    const updatedUser = await updatePhoneVerification(userId, true);
+
+    return res.json({
+      success: true,
+      message: 'Phone number verified',
+      data: {
+        user: {
+          id: updatedUser.id,
+          phoneVerified: updatedUser.phoneVerified,
+          trustScore: updatedUser.trustScore,
+        },
+      },
     });
   })
 );

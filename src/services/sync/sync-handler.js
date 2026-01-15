@@ -1,5 +1,6 @@
 const { readMultipleStreams } = require('./stream-manager');
 const { filterEntriesNeedingSync, getEntityForSync } = require('./change-detector');
+const { filterNotifications } = require('../notifications/notification-filter');
 const { logger } = require('../logger');
 
 /**
@@ -16,9 +17,27 @@ const ENTITY_FREQUENCIES = {
  * @param {Object<string, string>} lastSync - Object mapping entityType to last stream ID
  * @param {Array<string>} entityTypes - Entity types to check (optional, filters results)
  * @param {number} limit - Maximum entries per stream
+ * @param {string} userId - User ID for notification filtering
+ * @param {Array<string>} userGroups - User groups for notification filtering
+ * @param {string} userRegion - User region for notification filtering
+ * @param {string} userProvince - User province for notification filtering
+ * @param {string} userCity - User city for notification filtering
+ * @param {string} userDeviceId - User device ID for notification filtering
+ * @param {boolean} isRegistered - Whether user is registered
  * @returns {Promise<object>} Sync response with updates or inSync flag
  */
-async function processSync(lastSync = {}, entityTypes = null, limit = 100) {
+async function processSync(
+  lastSync = {}, 
+  entityTypes = null, 
+  limit = 100,
+  userId = null,
+  userGroups = [],
+  userRegion = null,
+  userProvince = null,
+  userCity = null,
+  userDeviceId = null,
+  isRegistered = true
+) {
   try {
     // Build streamsToCheck: if entityTypes specified, use them (with '0-0' if no lastSync), otherwise use all from lastSync
     let streamsToCheck = {};
@@ -53,8 +72,23 @@ async function processSync(lastSync = {}, entityTypes = null, limit = 100) {
         continue;
       }
 
+      // For notifications, apply user-based filtering first
+      let entriesToProcess = entries;
+      if (entityType === 'notification' && userId) {
+        entriesToProcess = filterNotifications(
+          entries,
+          userId,
+          userGroups,
+          userRegion,
+          userProvince,
+          userCity,
+          userDeviceId,
+          isRegistered
+        );
+      }
+
       // Filter entries that actually need sync (hash comparison)
-      const entriesNeedingSync = await filterEntriesNeedingSync(entries);
+      const entriesNeedingSync = await filterEntriesNeedingSync(entriesToProcess);
 
       // Get entity data for each entry that needs sync
       for (const entry of entriesNeedingSync) {
@@ -75,7 +109,11 @@ async function processSync(lastSync = {}, entityTypes = null, limit = 100) {
       }
 
       // If we processed entries but none needed sync, update last ID to latest
-      if (entries.length > 0 && entriesNeedingSync.length === 0) {
+      if (entriesToProcess.length > 0 && entriesNeedingSync.length === 0) {
+        const lastEntry = entriesToProcess[entriesToProcess.length - 1];
+        lastIds[entityType] = lastEntry.id;
+      } else if (entries.length > 0 && entriesNeedingSync.length === 0) {
+        // Fallback: if no entries to process but we had entries, update to latest
         const lastEntry = entries[entries.length - 1];
         lastIds[entityType] = lastEntry.id;
       }
@@ -128,9 +166,26 @@ async function processFastSync(lastSync = {}, limit = 100) {
  * Process sync request for medium-frequency entities
  * @param {Object<string, string>} lastSync - Last sync IDs
  * @param {number} limit - Max entries per stream
+ * @param {string} userId - User ID for notification filtering
+ * @param {Array<string>} userGroups - User groups for notification filtering
+ * @param {string} userRegion - User region for notification filtering
+ * @param {string} userProvince - User province for notification filtering
+ * @param {string} userCity - User city for notification filtering
+ * @param {string} userDeviceId - User device ID for notification filtering
+ * @param {boolean} isRegistered - Whether user is registered
  * @returns {Promise<object>} Sync response
  */
-async function processMediumSync(lastSync = {}, limit = 100) {
+async function processMediumSync(
+  lastSync = {}, 
+  limit = 100,
+  userId = null,
+  userGroups = [],
+  userRegion = null,
+  userProvince = null,
+  userCity = null,
+  userDeviceId = null,
+  isRegistered = true
+) {
   const mediumTypes = ENTITY_FREQUENCIES.medium;
   const filteredLastSync = {};
 
@@ -143,7 +198,18 @@ async function processMediumSync(lastSync = {}, limit = 100) {
     }
   }
 
-  return await processSync(filteredLastSync, mediumTypes, limit);
+  return await processSync(
+    filteredLastSync, 
+    mediumTypes, 
+    limit,
+    userId,
+    userGroups,
+    userRegion,
+    userProvince,
+    userCity,
+    userDeviceId,
+    isRegistered
+  );
 }
 
 /**

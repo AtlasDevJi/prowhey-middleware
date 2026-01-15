@@ -25,6 +25,10 @@ const syncRequestSchema = z.object({
   userId: z.string().optional(), // For notification filtering
   userGroups: z.array(z.string()).optional(), // For notification filtering
   userRegion: z.string().optional(), // For notification filtering
+  userProvince: z.string().optional(), // For notification filtering (new)
+  userCity: z.string().optional(), // For notification filtering (new)
+  userDeviceId: z.string().optional(), // For notification filtering (new)
+  isRegistered: z.boolean().optional().default(true), // For notification filtering (new)
 });
 
 /**
@@ -42,12 +46,23 @@ router.post(
         userId: req.body.userId,
         userGroups: req.body.userGroups,
         userRegion: req.body.userRegion,
+        userProvince: req.body.userProvince,
+        userCity: req.body.userCity,
+        userDeviceId: req.body.userDeviceId || req.deviceId,
+        isRegistered: req.body.isRegistered,
       });
 
       const result = await processSync(
         validated.lastSync,
         validated.entityTypes,
-        validated.limit
+        validated.limit,
+        validated.userId,
+        validated.userGroups,
+        validated.userRegion,
+        validated.userProvince,
+        validated.userCity,
+        validated.userDeviceId,
+        validated.isRegistered
       );
 
       logger.info('Sync check completed', {
@@ -104,9 +119,23 @@ router.post(
         userId: req.body.userId,
         userGroups: req.body.userGroups,
         userRegion: req.body.userRegion,
+        userProvince: req.body.userProvince,
+        userCity: req.body.userCity,
+        userDeviceId: req.body.userDeviceId || req.deviceId,
+        isRegistered: req.body.isRegistered,
       });
 
-      const result = await processMediumSync(validated.lastSync, validated.limit);
+      const result = await processMediumSync(
+        validated.lastSync, 
+        validated.limit,
+        validated.userId,
+        validated.userGroups,
+        validated.userRegion,
+        validated.userProvince,
+        validated.userCity,
+        validated.userDeviceId,
+        validated.isRegistered
+      );
 
       return res.json(result);
     } catch (error) {

@@ -26,9 +26,10 @@ function validateRequest(schema) {
   return async (req, res, next) => {
     try {
       // Prepare data for validation
+      // For GET requests, body should be empty object or undefined
       const dataToValidate = {
         params: req.params || {},
-        body: req.body || {},
+        body: req.method === 'GET' ? {} : (req.body || {}),
         query: req.query || {},
       };
 

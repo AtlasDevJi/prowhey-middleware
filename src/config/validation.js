@@ -169,7 +169,7 @@ const analyticsRatingRequestSchema = z.object({
 // Analytics rating endpoint: only path param (for GET)
 const analyticsRatingGetRequestSchema = z.object({
   params: analyticsProductNameSchema,
-  body: z.object({}).passthrough(), // Empty body for GET
+  body: z.object({}).optional().default({}), // Empty body for GET
   query: z.object({}).passthrough(),
 });
 
@@ -183,7 +183,7 @@ const analyticsCommentRequestSchema = z.object({
 // Analytics comment endpoint: only path param (for GET)
 const analyticsCommentGetRequestSchema = z.object({
   params: analyticsProductNameSchema,
-  body: z.object({}).passthrough(), // Empty body for GET
+  body: z.object({}).optional().default({}), // Empty body for GET
   query: z.object({}).passthrough(),
 });
 
@@ -243,7 +243,35 @@ const webhookErpnextRequestSchema = z.object({
 // Phone number regex (E.164 format)
 const phoneRegex = /^\+[1-9]\d{1,14}$/;
 
-// Signup schema
+// WhatsApp number regex (E.164 format, same as phone)
+const whatsappRegex = /^\+[1-9]\d{1,14}$/;
+
+// Telegram username regex (starts with @, alphanumeric and underscores)
+const telegramUsernameRegex = /^@[a-zA-Z0-9_]{5,32}$/;
+
+// Geolocation schema
+const geolocationSchema = z.object({
+  lat: z.number().min(-90).max(90),
+  lng: z.number().min(-180).max(180),
+  province: z.string().max(100).optional(),
+  city: z.string().max(100).optional(),
+  street: z.string().max(200).optional(),
+}).optional().nullable();
+
+// Avatar schema (base64 data URL)
+const avatarSchema = z.string()
+  .regex(/^data:image\/(jpeg|jpg|png);base64,/, 'Avatar must be a base64-encoded JPEG or PNG image')
+  .refine((val) => {
+    // Check size (approximately 100KB limit)
+    // Base64 is ~33% larger than binary, so 100KB binary ≈ 133KB base64
+    const base64Data = val.split(',')[1];
+    if (!base64Data) return false;
+    const sizeInBytes = (base64Data.length * 3) / 4;
+    return sizeInBytes <= 100 * 1024; // 100KB
+  }, 'Avatar size must be less than 100KB')
+  .optional();
+
+// Signup schema (enhanced with new fields)
 const signupSchema = z.object({
   username: z
     .string()
@@ -256,6 +284,26 @@ const signupSchema = z.object({
   verificationMethod: z.enum(['sms', 'whatsapp']).optional(),
   deviceId: z.string().min(1, 'Device ID required'),
   googleId: z.string().optional(), // For Google OAuth signup
+  // New profile fields
+  first_name: z.string().max(50).optional(),
+  surname: z.string().max(50).optional(),
+  age: z.number().int().min(13).max(120).optional(), // Age range validation
+  occupation: z.string().max(100).optional(),
+  fitness_level: z.enum(['beginner', 'intermediate', 'advanced', 'professional']).optional(),
+  gender: z.enum(['male', 'female', 'other', 'prefer_not_to_say']).optional(),
+  fitness_goal: z.enum(['weight_loss', 'muscle_gain', 'endurance', 'general_fitness', 'athletic_performance', 'rehabilitation']).optional(),
+  province: z.string().max(100).optional(),
+  city: z.string().max(100).optional(),
+  whatsapp_number: z.string().regex(whatsappRegex, 'Invalid WhatsApp number format').optional(),
+  telegram_username: z.string().regex(telegramUsernameRegex, 'Invalid Telegram username format (must start with @)').optional(),
+  avatar: avatarSchema,
+  geolocation: geolocationSchema,
+  location_consent: z.boolean().optional(),
+  customer_type: z.enum(['retail']).optional().default('retail'),
+  device_model: z.string().max(100).optional(),
+  os_model: z.string().max(100).optional(),
+  erpnext_customer_id: z.string().max(100).optional(), // ERPNext customer ID (set from Redis/admin)
+  approved_customer: z.boolean().optional().default(false), // Whether customer is approved for orders
 });
 
 // Login schema
@@ -295,7 +343,7 @@ const googleLoginSchema = z.object({
   deviceId: z.string().min(1, 'Device ID required'),
 });
 
-// Update profile schema (with passwordConfirmed flag)
+// Update profile schema (enhanced with new fields)
 const updateProfileSchema = z.object({
   username: z
     .string()
@@ -308,6 +356,47 @@ const updateProfileSchema = z.object({
   passwordConfirmed: z.boolean().refine((val) => val === true, {
     message: 'Password confirmation required',
   }),
+  // New profile fields
+  first_name: z.string().max(50).optional(),
+  surname: z.string().max(50).optional(),
+  age: z.number().int().min(13).max(120).optional(),
+  occupation: z.string().max(100).optional(),
+  fitness_level: z.enum(['beginner', 'intermediate', 'advanced', 'professional']).optional(),
+  gender: z.enum(['male', 'female', 'other', 'prefer_not_to_say']).optional(),
+  fitness_goal: z.enum(['weight_loss', 'muscle_gain', 'endurance', 'general_fitness', 'athletic_performance', 'rehabilitation']).optional(),
+  province: z.string().max(100).optional(),
+  city: z.string().max(100).optional(),
+  whatsapp_number: z.string().regex(whatsappRegex, 'Invalid WhatsApp number format').optional(),
+  telegram_username: z.string().regex(telegramUsernameRegex, 'Invalid Telegram username format (must start with @)').optional(),
+  avatar: avatarSchema,
+  geolocation: geolocationSchema,
+  location_consent: z.boolean().optional(),
+  customer_type: z.enum(['retail']).optional(),
+  device_model: z.string().max(100).optional(),
+  os_model: z.string().max(100).optional(),
+  erpnext_customer_id: z.string().max(100).optional(), // ERPNext customer ID (set from Redis/admin)
+  approved_customer: z.boolean().optional(), // Whether customer is approved for orders
+});
+
+// Anonymous user creation schema
+const anonymousUserSchema = z.object({
+  device_id: z.string().min(1, 'Device ID required'),
+  device_model: z.string().max(100).optional(),
+  os_model: z.string().max(100).optional(),
+  geolocation: geolocationSchema.optional(),
+  location_consent: z.boolean().optional().default(false),
+});
+
+// Device info update schema
+const deviceInfoSchema = z.object({
+  device_model: z.string().max(100).optional(),
+  os_model: z.string().max(100).optional(),
+});
+
+// Geolocation update schema
+const geolocationUpdateSchema = z.object({
+  geolocation: geolocationSchema.nullable(), // Allow null to revoke consent
+  location_consent: z.boolean(),
 });
 
 // Change password schema
@@ -319,6 +408,27 @@ const changePasswordSchema = z.object({
 // Verify email schema (for email changes)
 const verifyEmailSchema = z.object({
   code: z.string().length(6, 'Code must be 6 digits'),
+});
+
+// Anonymous user request schema
+const anonymousUserRequestSchema = z.object({
+  params: z.object({}).passthrough(),
+  body: anonymousUserSchema,
+  query: z.object({}).passthrough(),
+});
+
+// Device info request schema
+const deviceInfoRequestSchema = z.object({
+  params: z.object({}).passthrough(),
+  body: deviceInfoSchema,
+  query: z.object({}).passthrough(),
+});
+
+// Geolocation update request schema
+const geolocationUpdateRequestSchema = z.object({
+  params: z.object({}).passthrough(),
+  body: geolocationUpdateSchema,
+  query: z.object({}).passthrough(),
 });
 
 // Combined request schemas for middleware
@@ -392,6 +502,13 @@ module.exports = {
   analyticsInteractionSchema,
   analyticsBatchEventSchema,
   analyticsBatchSchema,
+  
+  // User profile schemas
+  geolocationSchema,
+  avatarSchema,
+  anonymousUserSchema,
+  deviceInfoSchema,
+  geolocationUpdateSchema,
 
   // Webhook schemas
   webhookPriceUpdateSchema,
@@ -430,5 +547,8 @@ module.exports = {
   updateProfileRequestSchema,
   changePasswordRequestSchema,
   verifyEmailRequestSchema,
+  anonymousUserRequestSchema,
+  deviceInfoRequestSchema,
+  geolocationUpdateRequestSchema,
 };
 

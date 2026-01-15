@@ -11,6 +11,7 @@ This guide provides comprehensive instructions for integrating the Prowhey Middl
 - [Product Integration](#product-integration)
 - [Stock Availability Integration](#stock-availability-integration)
 - [Analytics Integration](#analytics-integration)
+- [User Profile & Anonymous Users](#user-profile--anonymous-users)
 - [Sync API Integration](#sync-api-integration)
 - [Error Handling](#error-handling)
 - [Best Practices](#best-practices)
@@ -1132,6 +1133,345 @@ trackInteraction('share', 'WEB-ITM-0001', { platform: 'whatsapp' });
    - Use public endpoints (views, comments, ratings) for displaying data to users
    - Use analytics-only endpoints for data collection (no read access needed)
 5. **Error Handling**: Analytics failures shouldn't block user experience - handle errors gracefully
+
+---
+
+## User Profile & Anonymous Users
+
+The middleware supports both registered users and anonymous (non-registered) users. All users have unique user IDs, and anonymous users can be converted to registered users during signup.
+
+### Anonymous User Creation
+
+When your app first opens, create an anonymous user to track device and usage:
+
+**Endpoint:** `POST /api/users/anonymous`
+
+**When to Call:** On app launch (first time only, or if no userId exists)
+
+**Example:**
+```javascript
+import DeviceInfo from 'react-native-device-info';
+import Geolocation from '@react-native-community/geolocation';
+
+async function initializeAnonymousUser() {
+  try {
+    // Check if we already have a userId
+    const existingUserId = await AsyncStorage.getItem('userId');
+    if (existingUserId) {
+      return existingUserId; // Already initialized
+    }
+
+    const deviceId = await DeviceInfo.getUniqueId();
+    const deviceModel = `${DeviceInfo.getBrand()} ${DeviceInfo.getModel()}`;
+    const osModel = `${DeviceInfo.getSystemName()} ${DeviceInfo.getSystemVersion()}`;
+
+    // Request location permission
+    let geolocation = null;
+    let locationConsent = false;
+    
+    try {
+      const hasPermission = await requestLocationPermission();
+      if (hasPermission) {
+        const position = await getCurrentPosition();
+        geolocation = {
+          lat: position.coords.latitude,
+          lng: position.coords.longitude,
+          // Optionally reverse geocode to get province/city
+        };
+        locationConsent = true;
+      }
+    } catch (error) {
+      console.log('Location permission denied or unavailable');
+    }
+
+    const response = await fetch(`${BASE_URL}/api/users/anonymous`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Device-ID': deviceId,
+      },
+      body: JSON.stringify({
+        device_id: deviceId,
+        device_model: deviceModel,
+        os_model: osModel,
+        geolocation: geolocation,
+        location_consent: locationConsent,
+      }),
+    });
+
+    const data = await response.json();
+    
+    if (data.success) {
+      // Store userId for future requests
+      await AsyncStorage.setItem('userId', data.data.userId);
+      await AsyncStorage.setItem('isRegistered', String(data.data.isRegistered));
+      return data.data.userId;
+    }
+  } catch (error) {
+    console.error('Failed to initialize anonymous user:', error);
+    // Don't block app - continue without anonymous user
+  }
+}
+```
+
+### Device Info Update
+
+Update device information when device changes or on app start:
+
+**Endpoint:** `POST /api/users/device-info`
+
+**Example:**
+```javascript
+async function updateDeviceInfo() {
+  const deviceId = await DeviceInfo.getUniqueId();
+  const deviceModel = `${DeviceInfo.getBrand()} ${DeviceInfo.getModel()}`;
+  const osModel = `${DeviceInfo.getSystemName()} ${DeviceInfo.getSystemVersion()}`;
+
+  await fetch(`${BASE_URL}/api/users/device-info`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-Device-ID': deviceId,
+    },
+    body: JSON.stringify({
+      device_model: deviceModel,
+      os_model: osModel,
+    }),
+  });
+}
+```
+
+### Geolocation Update
+
+Update user geolocation with explicit consent:
+
+**Endpoint:** `POST /api/users/geolocation`
+
+**Example:**
+```javascript
+async function updateGeolocation(lat, lng, consent = true) {
+  const deviceId = await DeviceInfo.getUniqueId();
+  const accessToken = await getAccessToken(); // Optional - for registered users
+
+  // Reverse geocode to get province/city (can be done client-side or server-side)
+  const geolocation = {
+    lat: lat,
+    lng: lng,
+    province: 'Riyadh', // From reverse geocoding
+    city: 'Riyadh',     // From reverse geocoding
+  };
+
+  const headers = {
+    'Content-Type': 'application/json',
+    'X-Device-ID': deviceId,
+  };
+
+  // Include auth token if user is registered
+  if (accessToken) {
+    headers['Authorization'] = `Bearer ${accessToken}`;
+  }
+
+  const response = await fetch(`${BASE_URL}/api/users/geolocation`, {
+    method: 'POST',
+    headers: headers,
+    body: JSON.stringify({
+      geolocation: geolocation,
+      location_consent: consent,
+    }),
+  });
+
+  return await response.json();
+}
+```
+
+### User Profile Management
+
+#### Get Current User Profile
+
+**Endpoint:** `GET /api/auth/me` (requires authentication)
+
+**Example:**
+```javascript
+async function getCurrentUserProfile() {
+  const accessToken = await getAccessToken();
+  if (!accessToken) {
+    return null; // User not logged in
+  }
+
+  const response = await fetch(`${BASE_URL}/api/auth/me`, {
+    method: 'GET',
+    headers: {
+      'Authorization': `Bearer ${accessToken}`,
+      'X-Device-ID': await DeviceInfo.getUniqueId(),
+    },
+  });
+
+  const data = await response.json();
+  return data.success ? data.data.user : null;
+}
+```
+
+#### Update User Profile
+
+**Endpoint:** `PUT /api/auth/profile` (requires authentication)
+
+**Example:**
+```javascript
+async function updateUserProfile(updates) {
+  const accessToken = await getAccessToken();
+  if (!accessToken) {
+    throw new Error('User must be logged in');
+  }
+
+  // Verify password client-side first
+  const passwordCorrect = await verifyPasswordLocally(
+    updates.currentPassword,
+    storedPasswordHash
+  );
+
+  if (!passwordCorrect) {
+    throw new Error('Invalid password');
+  }
+
+  const response = await fetch(`${BASE_URL}/api/auth/profile`, {
+    method: 'PUT',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${accessToken}`,
+      'X-Device-ID': await DeviceInfo.getUniqueId(),
+    },
+    body: JSON.stringify({
+      username: updates.username,
+      email: updates.email,
+      phone: updates.phone,
+      province: updates.province,
+      city: updates.city,
+      whatsapp_number: updates.whatsappNumber,
+      telegram_username: updates.telegramUsername,
+      avatar: updates.avatar, // Base64-encoded image
+      geolocation: updates.geolocation,
+      location_consent: updates.locationConsent,
+      customer_type: updates.customerType,
+      erpnext_customer_id: updates.erpnextCustomerId, // Optional: ERPNext customer ID
+      approved_customer: updates.approvedCustomer, // Optional: Customer approval status
+      passwordConfirmed: true, // App verified password
+    }),
+  });
+
+  const data = await response.json();
+  
+  // If email changed, user needs to verify new email
+  if (data.data.needsEmailVerification) {
+    // Show OTP input and call verify-email endpoint
+    return { needsVerification: true, data: data.data };
+  }
+
+  return data.data.user;
+}
+```
+
+### Converting Anonymous to Registered User
+
+When an anonymous user signs up, the middleware automatically converts their anonymous account to a registered account, preserving device info and geolocation:
+
+**Example:**
+```javascript
+async function signup(username, email, password) {
+  const deviceId = await DeviceInfo.getUniqueId();
+  const existingUserId = await AsyncStorage.getItem('userId');
+
+  const response = await fetch(`${BASE_URL}/api/auth/signup`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-Device-ID': deviceId,
+    },
+    body: JSON.stringify({
+      username: username,
+      email: email,
+      password: password,
+      deviceId: deviceId, // Same deviceId as anonymous user
+      // Additional profile fields
+      province: 'Riyadh',
+      city: 'Riyadh',
+      customer_type: 'retail',
+    }),
+  });
+
+  const data = await response.json();
+  
+  if (data.success) {
+    // Update stored userId and registration status
+    await AsyncStorage.setItem('userId', data.data.user.id);
+    await AsyncStorage.setItem('isRegistered', 'true');
+    
+    // Store tokens if user is verified
+    if (data.data.accessToken) {
+      await SecureStore.setItemAsync('accessToken', data.data.accessToken);
+      await SecureStore.setItemAsync('refreshToken', data.data.refreshToken);
+    }
+  }
+
+  return data;
+}
+```
+
+### User Profile Data Structure
+
+**Registered User:**
+```javascript
+{
+  id: "usr_abc123...",
+  isRegistered: true,
+  username: "john_doe",
+  email: "john@example.com",
+  phone: "+966501234567",
+  province: "Riyadh",
+  city: "Riyadh",
+  whatsappNumber: "+966501234567",
+  telegramUsername: "@johndoe",
+  avatar: "data:image/jpeg;base64,...",
+  deviceModel: "iPhone 14 Pro",
+  osModel: "iOS 17.0",
+  geolocation: {
+    lat: 24.7136,
+    lng: 46.6753,
+    province: "Riyadh",
+    city: "Riyadh"
+  },
+  locationConsent: true,
+  customerType: "retail",
+  erpnextCustomerId: "CUST-001", // ERPNext customer ID (if linked)
+  approvedCustomer: true, // Whether customer is approved for orders
+  isVerified: true,
+  createdAt: "2024-01-15T10:30:00Z",
+  lastLogin: "2024-01-20T15:45:00Z"
+}
+```
+
+**Anonymous User:**
+```javascript
+{
+  id: "usr_xyz789...",
+  isRegistered: false,
+  deviceId: "device-456",
+  deviceModel: "Samsung Galaxy S23",
+  osModel: "Android 13",
+  geolocation: null, // or geolocation object if consent given
+  locationConsent: false,
+  customerType: "retail",
+  createdAt: "2024-01-15T10:30:00Z"
+}
+```
+
+### Best Practices
+
+1. **Initialize on App Launch**: Create anonymous user when app first opens
+2. **Store userId**: Save userId in AsyncStorage for future requests
+3. **Location Consent**: Always request explicit consent before collecting geolocation
+4. **Device Info**: Update device info on app start or when device changes
+5. **Privacy Compliance**: Respect user's location consent and allow revocation
+6. **Seamless Conversion**: Anonymous users are automatically converted to registered during signup
 
 ---
 
