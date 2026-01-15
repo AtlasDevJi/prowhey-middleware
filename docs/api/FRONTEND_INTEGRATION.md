@@ -197,6 +197,98 @@ function HomeScreen() {
 
 ---
 
+### Fetching Bundle Images
+
+**Endpoint:** `GET /api/bundle`
+
+**When to Call:** Only when home screen opens, and only if cached data is older than refresh rate (e.g., 1 hour).
+
+**Example:**
+```javascript
+import AsyncStorage from '@react-native-async-storage/async-storage';
+
+const BUNDLE_CACHE_KEY = 'bundle_images';
+const REFRESH_RATE = 3600000; // 1 hour
+
+async function getBundleImages() {
+  try {
+    // Check cache
+    const cached = await AsyncStorage.getItem(BUNDLE_CACHE_KEY);
+    if (cached) {
+      const { data, timestamp } = JSON.parse(cached);
+      const now = Date.now();
+      
+      if (now - timestamp < REFRESH_RATE) {
+        return data; // Use cached data
+      }
+    }
+    
+    // Fetch from API
+    const response = await fetch(`${BASE_URL}/api/bundle`);
+    const result = await response.json();
+    
+    if (result.success && result.bundleImages) {
+      // Cache the data
+      await AsyncStorage.setItem(BUNDLE_CACHE_KEY, JSON.stringify({
+        data: result.bundleImages,
+        timestamp: Date.now()
+      }));
+      
+      return result.bundleImages;
+    }
+    
+    throw new Error('Failed to fetch bundle images');
+  } catch (error) {
+    console.error('Error fetching bundle images:', error);
+    // Return cached data if available, even if expired
+    const cached = await AsyncStorage.getItem(BUNDLE_CACHE_KEY);
+    if (cached) {
+      return JSON.parse(cached).data;
+    }
+    return [];
+  }
+}
+
+// Usage in React component
+function HomeScreen() {
+  const [bundleImages, setBundleImages] = useState([]);
+  
+  useEffect(() => {
+    getBundleImages().then(setBundleImages);
+  }, []);
+  
+  return (
+    <ScrollView>
+      {bundleImages.map((imageDataUrl, index) => (
+        <Image
+          key={index}
+          source={{ uri: imageDataUrl }} // Base64 data URL works directly
+          style={{ width: '100%', height: 200 }}
+        />
+      ))}
+    </ScrollView>
+  );
+}
+```
+
+**Response Format:**
+```json
+{
+  "success": true,
+  "bundleImages": [
+    "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQEAYABgAAD...",
+    "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAA..."
+  ]
+}
+```
+
+**Notes:**
+- Images are base64-encoded data URLs, ready for direct display
+- No additional download needed
+- Cache with timestamp to respect refresh rate
+
+---
+
 ### Fetching App Home Data
 
 **Endpoint:** `GET /api/home`

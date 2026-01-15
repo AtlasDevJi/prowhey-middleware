@@ -45,7 +45,13 @@ async function setCache(entityType, entityId, data) {
 
     // Store as JSON string
     const jsonString = JSON.stringify(data);
-    await redis.setex(cacheKey, ttl, jsonString);
+    
+    // Use setex only if TTL > 0, otherwise use set (persistent)
+    if (ttl > 0) {
+      await redis.setex(cacheKey, ttl, jsonString);
+    } else {
+      await redis.set(cacheKey, jsonString);
+    }
 
     return true;
   } catch (error) {
@@ -98,7 +104,13 @@ async function updateCache(entityType, entityId, updates) {
 
     // Store updated data
     const jsonString = JSON.stringify(updated);
-    await redis.setex(cacheKey, ttl, jsonString);
+    
+    // Use setex only if TTL > 0, otherwise use set (persistent)
+    if (ttl > 0) {
+      await redis.setex(cacheKey, ttl, jsonString);
+    } else {
+      await redis.set(cacheKey, jsonString);
+    }
 
     return true;
   } catch (error) {
@@ -184,6 +196,15 @@ async function deleteCacheHash(entityType, entityId) {
     const redis = getRedisClient();
     const hashKey = `hash:${getCacheKey(entityType, entityId)}`;
     const simpleKey = getCacheKey(entityType, entityId);
+    
+    // Log deletion for debugging (especially to track unexpected deletions)
+    logger.warn('Deleting cache hash', {
+      entityType,
+      entityId,
+      hashKey,
+      simpleKey,
+      stack: new Error().stack, // Include stack trace to see where it's called from
+    });
     
     // Delete both hash and simple cache
     const results = await redis.del(hashKey, simpleKey);
@@ -396,8 +417,12 @@ async function setCacheHash(entityType, entityId, data, metadata = {}) {
     await redis.hset(cacheKey, hashFields);
 
     // Set TTL on the hash key (only if TTL > 0, otherwise persistent)
+    // If TTL is 0, explicitly remove any existing TTL to ensure persistence
     if (ttl > 0) {
       await redis.expire(cacheKey, ttl);
+    } else {
+      // Remove any existing TTL to ensure key is persistent
+      await redis.persist(cacheKey);
     }
 
     return true;

@@ -230,9 +230,9 @@ Checks for updates on medium-frequency entities (stock, notifications, announcem
 
 **Endpoint:** `POST /api/sync/check-slow`
 
-Checks for updates on low-frequency entities (products, prices, hero list). Poll daily or on-demand.
+Checks for updates on low-frequency entities (products, prices, hero list, bundle list). Poll daily or on-demand.
 
-**Entity Types:** `product`, `price`, `hero`
+**Entity Types:** `product`, `price`, `hero`, `bundle`
 
 **Request Body:**
 ```json
@@ -497,6 +497,52 @@ redis-cli SET warehouses:reference '["Warehouse 1","Warehouse 2","Warehouse 3"]'
 - Hero images are fetched from ERPNext File doctype with filter `is_hero = 1`
 - Images are downloaded and converted to base64 during transformation
 - Hero updates are included in slow-frequency sync (`/api/sync/check-slow`)
+- Follow detail-page-driven caching strategy (fetch only when home page opens)
+
+---
+
+### Bundle
+
+**Entity Type:** `bundle`
+
+**Entity ID:** `bundle` (single entity, no ID needed)
+
+**Data Structure:**
+```typescript
+{
+  bundleImages: Array<string>; // Array of base64-encoded data URLs
+}
+```
+
+**Bundle Images Format:**
+- Each image is a base64-encoded data URL
+- Format: `data:image/{type};base64,{base64data}`
+- Images are downloaded from ERPNext File doctype (where `is_bundle = 1`)
+- Images are cached as base64 data, not URLs
+- Ready for direct display in the app (no additional download needed)
+
+**Example Bundle Update:**
+```json
+{
+  "entity_type": "bundle",
+  "entity_id": "bundle",
+  "data": {
+    "bundleImages": [
+      "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQEAYABgAAD...",
+      "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAA..."
+    ]
+  },
+  "updated_at": "1768469419659",
+  "version": "1",
+  "data_hash": "a1b2c3d4e5f6...",
+  "idempotency_key": "uuid-123-456"
+}
+```
+
+**Notes:**
+- Bundle images are fetched from ERPNext File doctype with filter `is_bundle = 1`
+- Images are downloaded and converted to base64 during transformation
+- Bundle updates are included in slow-frequency sync (`/api/sync/check-slow`)
 - Follow detail-page-driven caching strategy (fetch only when home page opens)
 
 ---

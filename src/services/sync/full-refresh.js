@@ -5,8 +5,8 @@ const {
   getCacheHash,
   incrementCacheHashVersion,
 } = require('../redis/cache');
-const { fetchPublishedWebsiteItems, fetchProduct, fetchItemStock, fetchHeroImages, fetchAppHome } = require('../erpnext/client');
-const { transformProduct, transformHeroImages, transformAppHome } = require('../cache/transformer');
+const { fetchPublishedWebsiteItems, fetchProduct, fetchItemStock, fetchHeroImages, fetchBundleImages, fetchAppHome } = require('../erpnext/client');
+const { transformProduct, transformHeroImages, transformBundleImages, transformAppHome } = require('../cache/transformer');
 const { fetchItemPrice } = require('../price/price');
 const { getWarehouseReferenceArray, buildAvailabilityArray } = require('../stock/stock');
 const { logger } = require('../logger');
@@ -528,6 +528,87 @@ async function refreshAllHero() {
 }
 
 /**
+ * Refresh all bundle images
+ * Fetches bundle images from ERPNext, downloads and converts to base64, compares hashes, updates cache and streams only if changed
+ * @returns {Promise<object>} Summary object
+ */
+async function refreshAllBundle() {
+  const summary = {
+    updated: 0,
+    unchanged: 0,
+    errors: [],
+  };
+
+  try {
+    const entityId = 'bundle';
+
+    logger.info('Starting full bundle refresh');
+
+    // Fetch bundle images from ERPNext
+    const fileUrls = await fetchBundleImages();
+
+    if (!fileUrls || fileUrls.length === 0) {
+      logger.warn('No bundle images found in ERPNext');
+      return summary;
+    }
+
+    // Wrap in ERPNext response format for transformer
+    const erpnextData = {
+      data: fileUrls.map((url) => ({ file_url: url })),
+    };
+
+    // Transform (downloads images and converts to base64)
+    const transformedData = await transformBundleImages(erpnextData);
+
+    // Compute hash
+    const newHash = computeDataHash(transformedData);
+
+    // Get existing cache
+    const existing = await getCacheHash('bundle', entityId);
+
+    // Check if changed
+    if (existing && existing.data_hash === newHash) {
+      summary.unchanged = 1;
+      logger.info('Bundle refresh: no change detected');
+      return summary;
+    }
+
+    // Update cache
+    const updatedAt = Date.now().toString();
+    let version = '1';
+    if (existing) {
+      version = await incrementCacheHashVersion('bundle', entityId);
+      if (!version) {
+        version = (parseInt(existing.version) + 1).toString();
+      }
+    }
+
+    const success = await setCacheHash('bundle', entityId, transformedData, {
+      data_hash: newHash,
+      updated_at: updatedAt,
+      version,
+    });
+
+    if (!success) {
+      throw new Error('Failed to update bundle cache');
+    }
+
+    // Add stream entry only if changed
+    await addStreamEntry('bundle', entityId, newHash, version);
+
+    summary.updated = 1;
+    logger.info('Bundle refresh completed', summary);
+    return summary;
+  } catch (error) {
+    logger.error('Full bundle refresh failed', {
+      error: error.message,
+    });
+    summary.errors.push({ error: error.message });
+    return summary;
+  }
+}
+
+/**
  * Refresh all App Home data
  * Fetches App Home from ERPNext, transforms, compares hashes, updates cache and streams only if changed
  * @returns {Promise<object>} Summary object
@@ -618,11 +699,12 @@ async function refreshAllHome() {
 async function performFullRefresh() {
   logger.info('Starting full refresh of all entities');
 
-  const [productsSummary, pricesSummary, stockSummary, heroSummary, homeSummary] = await Promise.all([
+  const [productsSummary, pricesSummary, stockSummary, heroSummary, bundleSummary, homeSummary] = await Promise.all([
     refreshAllProducts(),
     refreshAllPrices(),
     refreshAllStock(),
     refreshAllHero(),
+    refreshAllBundle(),
     refreshAllHome(),
   ]);
 
@@ -631,6 +713,7 @@ async function performFullRefresh() {
     prices: pricesSummary,
     stock: stockSummary,
     hero: heroSummary,
+    bundle: bundleSummary,
     home: homeSummary,
     timestamp: new Date().toISOString(),
   };
@@ -644,6 +727,7 @@ module.exports = {
   refreshAllPrices,
   refreshAllStock,
   refreshAllHero,
+  refreshAllBundle,
   refreshAllHome,
   performFullRefresh,
 };

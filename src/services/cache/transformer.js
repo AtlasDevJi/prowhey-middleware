@@ -228,6 +228,40 @@ async function transformHeroImages(erpnextData) {
 }
 
 /**
+ * Transform bundle images from ERPNext File data
+ * Downloads images and converts to base64 data URLs
+ * @param {object} erpnextData - ERPNext response with file URLs
+ * @returns {Promise<object>} Transformed bundle images object
+ */
+async function transformBundleImages(erpnextData) {
+  if (!erpnextData?.data) {
+    return { bundleImages: [] };
+  }
+
+  const { downloadHeroImage } = require('../erpnext/client');
+  const bundleImages = [];
+
+  // Process each file URL
+  for (const file of erpnextData.data) {
+    if (!file.file_url) {
+      continue;
+    }
+
+    // Download and convert to base64
+    const base64DataUrl = await downloadHeroImage(file.file_url);
+    if (base64DataUrl) {
+      bundleImages.push(base64DataUrl);
+    } else {
+      logger.warn('Failed to download bundle image, skipping', {
+        file_url: file.file_url,
+      });
+    }
+  }
+
+  return { bundleImages };
+}
+
+/**
  * Transform App Home data from ERPNext
  * Parses JSON strings and selects latest if multiple
  * @param {object} erpnextData - ERPNext App Home response
@@ -293,6 +327,7 @@ module.exports = {
   parseBenefits,
   fetchProductAnalytics,
   transformHeroImages,
+  transformBundleImages,
   transformAppHome,
 };
 

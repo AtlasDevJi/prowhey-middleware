@@ -8,7 +8,7 @@ const { logger } = require('../logger');
 const ENTITY_FREQUENCIES = {
   fast: ['view', 'comment', 'user'], // High-frequency (5-15 min)
   medium: ['stock', 'notification', 'announcement'], // Medium-frequency (hourly)
-  slow: ['product', 'price', 'hero', 'home'], // Low-frequency (daily or on-demand)
+  slow: ['product', 'price', 'hero', 'home', 'bundle'], // Low-frequency (daily or on-demand)
 };
 
 /**

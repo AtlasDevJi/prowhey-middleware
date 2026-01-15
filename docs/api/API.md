@@ -1565,6 +1565,45 @@ GET /api/hero
 
 ---
 
+### Get Bundle Images
+
+**Endpoint:** `GET /api/bundle`
+
+Fetches bundle images from ERPNext File doctype (where `is_bundle = 1`). Images are downloaded and converted to base64 data URLs for direct display in the app.
+
+**Example Request:**
+```bash
+GET /api/bundle
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "bundleImages": [
+    "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQEAYABgAAD...",
+    "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAA..."
+  ]
+}
+```
+
+**Bundle Images Format:**
+- Each image is a base64-encoded data URL
+- Format: `data:image/{type};base64,{base64data}`
+- Images are downloaded from ERPNext and cached as base64 data
+- Ready for direct display in the app (no additional download needed)
+
+**Usage:** Call this endpoint only when a user opens the home page, and only if the app's cached data is older than your refresh rate (e.g., 1 hour).
+
+**Error Responses:**
+
+| Status | Error | Description |
+|--------|-------|-------------|
+| `404` | Not Found | No bundle images found |
+| `500` | Internal Server Error | Failed to fetch bundle images |
+
+---
+
 ### Get App Home Data
 
 **Endpoint:** `GET /api/home`
@@ -1753,7 +1792,7 @@ The sync API provides endpoints for efficiently syncing data between the middlew
 - **`POST /api/sync/check`** - Unified sync endpoint (all entity types)
 - **`POST /api/sync/check-fast`** - Fast-frequency sync (views, comments, user profile)
 - **`POST /api/sync/check-medium`** - Medium-frequency sync (stock, notifications)
-- **`POST /api/sync/check-slow`** - Slow-frequency sync (products, prices, hero list)
+- **`POST /api/sync/check-slow`** - Slow-frequency sync (products, prices, hero list, bundle list)
 
 The sync system uses Redis Streams to track changes and only returns updates when data has actually changed, minimizing bandwidth and processing.
 

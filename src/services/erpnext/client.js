@@ -396,6 +396,57 @@ async function fetchAppHome() {
   }
 }
 
+/**
+ * Fetch bundle images from ERPNext File doctype
+ * Returns array of file URLs
+ * @returns {Promise<Array<string>>} Array of file URLs
+ */
+async function fetchBundleImages() {
+  try {
+    const client = createErpnextClient();
+    const doctype = 'File';
+
+    const fields = ['file_url'];
+    const filters = [['is_bundle', '=', 1]];
+    const limit = 10;
+
+    const encodedDoctype = encodeURIComponent(doctype);
+    const filtersStr = encodeURIComponent(JSON.stringify(filters));
+    const fieldsStr = encodeURIComponent(JSON.stringify(fields));
+    
+    const url = `/api/resource/${encodedDoctype}?filters=${filtersStr}&fields=${fieldsStr}&limit=${limit}`;
+    
+    logger.info('Fetching bundle images', { url });
+    
+    const response = await client.get(url);
+
+    if (!response.data || !response.data.data) {
+      logger.warn('No bundle images returned from ERPNext', {
+        responseData: response.data,
+      });
+      return [];
+    }
+
+    // Extract file_url from response
+    const fileUrls = response.data.data
+      .map((file) => file.file_url)
+      .filter((url) => url); // Filter out null/undefined URLs
+
+    logger.info('Fetched bundle images', {
+      count: fileUrls.length,
+    });
+
+    return fileUrls;
+  } catch (error) {
+    logger.error('Failed to fetch bundle images from ERPNext', {
+      error: error.message,
+      status: error.response?.status,
+      responseData: error.response?.data,
+    });
+    return [];
+  }
+}
+
 module.exports = {
   createErpnextClient,
   fetchProduct,
@@ -405,6 +456,7 @@ module.exports = {
   fetchItemStock,
   downloadHeroImage,
   fetchHeroImages,
+  fetchBundleImages,
   fetchAppHome,
 };
 

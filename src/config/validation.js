@@ -66,10 +66,10 @@ const webhookPriceUpdateSchema = z.object({
   invalidateCache: z.boolean().optional().default(false),
 });
 
-// Unified ERPNext webhook body (supports product, price, stock, hero, home)
+// Unified ERPNext webhook body (supports product, price, stock, hero, bundle, home)
 const webhookErpnextSchema = z
   .object({
-    entity_type: z.enum(['product', 'price', 'stock', 'hero', 'home']),
+    entity_type: z.enum(['product', 'price', 'stock', 'hero', 'bundle', 'home']),
     // Product fields
     erpnextName: erpnextNameSchema.optional(),
     // Price fields
@@ -96,8 +96,8 @@ const webhookErpnextSchema = z
       if (data.entity_type === 'stock') {
         return !!data.itemCode;
       }
-      // Hero and home require no fields (webhook just triggers fetch)
-      if (data.entity_type === 'hero' || data.entity_type === 'home') {
+      // Hero, bundle, and home require no fields (webhook just triggers fetch)
+      if (data.entity_type === 'hero' || data.entity_type === 'bundle' || data.entity_type === 'home') {
         return true;
       }
       return true;

@@ -2,8 +2,8 @@ const express = require('express');
 const { handleAsyncErrors } = require('../utils/error-utils');
 const { NotFoundError, InternalServerError } = require('../utils/errors');
 const { getCacheHashData, setCacheHash, getCacheHash } = require('../services/redis/cache');
-const { fetchHeroImages, fetchAppHome } = require('../services/erpnext/client');
-const { transformHeroImages, transformAppHome } = require('../services/cache/transformer');
+const { fetchHeroImages, fetchBundleImages, fetchAppHome } = require('../services/erpnext/client');
+const { transformHeroImages, transformBundleImages, transformAppHome } = require('../services/cache/transformer');
 const { computeDataHash } = require('../services/sync/hash-computer');
 const { logger } = require('../services/logger');
 
@@ -143,6 +143,74 @@ router.get(
         throw error;
       }
       throw new InternalServerError('Failed to fetch App Home data');
+    }
+  })
+);
+
+/**
+ * GET /api/bundle
+ * Get bundle images (cached, with detail-page caching strategy)
+ * Returns array of base64-encoded bundle images
+ */
+router.get(
+  '/bundle',
+  handleAsyncErrors(async (req, res) => {
+    const entityId = 'bundle';
+
+    try {
+      // Check Redis hash cache first
+      const cached = await getCacheHash('bundle', entityId);
+
+      if (cached) {
+        logger.info('Bundle cache hit', { entityId });
+        const bundleData = await getCacheHashData('bundle', entityId);
+        return res.json({
+          success: true,
+          ...bundleData,
+        });
+      }
+
+      // Cache miss - fetch from ERPNext
+      logger.info('Bundle cache miss, fetching from ERPNext', { entityId });
+
+      // Fetch bundle images from ERPNext
+      const fileUrls = await fetchBundleImages();
+
+      if (!fileUrls || fileUrls.length === 0) {
+        throw new NotFoundError('No bundle images found');
+      }
+
+      // Wrap in ERPNext response format for transformer
+      const erpnextData = {
+        data: fileUrls.map((url) => ({ file_url: url })),
+      };
+
+      // Transform (downloads images and converts to base64)
+      const transformedData = await transformBundleImages(erpnextData);
+
+      // Compute hash
+      const newHash = computeDataHash(transformedData);
+
+      // Cache the transformed data
+      const updatedAt = Date.now().toString();
+      const version = '1';
+      await setCacheHash('bundle', entityId, transformedData, {
+        data_hash: newHash,
+        updated_at: updatedAt,
+        version,
+      });
+
+      logger.info('Bundle data cached', { entityId, imageCount: transformedData.bundleImages?.length || 0 });
+
+      return res.json({
+        success: true,
+        ...transformedData,
+      });
+    } catch (error) {
+      if (error.isOperational) {
+        throw error;
+      }
+      throw new InternalServerError('Failed to fetch bundle images');
     }
   })
 );

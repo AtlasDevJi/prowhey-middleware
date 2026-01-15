@@ -168,6 +168,49 @@ elif [ "${ENTITY_TYPE}" = "hero" ]; then
     -H "Content-Type: application/json" \
     -d "{\"lastSync\":{\"hero\":\"${LAST_ID}\"},\"entityTypes\":[\"hero\"],\"limit\":100}"
 
+elif [ "${ENTITY_TYPE}" = "bundle" ]; then
+  # Bundle sync test flow
+  step "1) ERPNext ping via middleware"
+  curl -s "${BASE_URL}/api/erpnext/ping" | jq . || curl -s "${BASE_URL}/api/erpnext/ping"
+
+  step "2) Fetch bundle images via API (populate cache)"
+  curl -s "${BASE_URL}/api/bundle" | jq . || curl -s "${BASE_URL}/api/bundle"
+
+  step "3) Trigger unified bundle webhook (hash + stream)"
+  curl -s -X POST "${BASE_URL}/api/webhooks/erpnext" \
+    -H "Content-Type: application/json" \
+    -d "{\"entity_type\":\"bundle\"}" \
+    | jq . || curl -s -X POST "${BASE_URL}/api/webhooks/erpnext" \
+    -H "Content-Type: application/json" \
+    -d "{\"entity_type\":\"bundle\"}"
+
+  step "4) Sync check (first call, expect updates)"
+  SYNC_RESPONSE=$(curl -s -X POST "${BASE_URL}/api/sync/check" \
+    -H "Content-Type: application/json" \
+    -d "{\"lastSync\":{},\"entityTypes\":[\"bundle\"],\"limit\":100}")
+
+  echo "${SYNC_RESPONSE}" | jq . || echo "${SYNC_RESPONSE}"
+
+  LAST_ID=$(echo "${SYNC_RESPONSE}" | jq -r '.lastIds.bundle_changes // .lastIds.bundle // empty' 2>/dev/null || true)
+
+  if [ -z "${LAST_ID}" ] || [ "${LAST_ID}" = "null" ]; then
+    echo
+    echo "WARNING: Could not extract lastIds.bundle from sync response."
+    echo "Skipping Step 5 (second sync check)."
+    exit 0
+  fi
+
+  echo
+  echo "Extracted last bundle stream ID: ${LAST_ID}"
+
+  step "5) Sync check (second call, expect inSync: true)"
+  curl -s -X POST "${BASE_URL}/api/sync/check" \
+    -H "Content-Type: application/json" \
+    -d "{\"lastSync\":{\"bundle\":\"${LAST_ID}\"},\"entityTypes\":[\"bundle\"],\"limit\":100}" \
+    | jq . || curl -s -X POST "${BASE_URL}/api/sync/check" \
+    -H "Content-Type: application/json" \
+    -d "{\"lastSync\":{\"bundle\":\"${LAST_ID}\"},\"entityTypes\":[\"bundle\"],\"limit\":100}"
+
 elif [ "${ENTITY_TYPE}" = "home" ]; then
   # Home sync test flow
   step "1) ERPNext ping via middleware"

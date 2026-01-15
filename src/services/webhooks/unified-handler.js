@@ -370,6 +370,102 @@ async function processHeroWebhook() {
 }
 
 /**
+ * Process webhook for bundle entity
+ * Fetches bundle images from ERPNext, downloads and converts to base64, computes hash, adds stream entry if changed
+ * @returns {Promise<object>} Result object with {changed: boolean, version: string, streamId: string|null}
+ */
+async function processBundleWebhook() {
+  try {
+    const { fetchBundleImages } = require('../erpnext/client');
+    const { transformBundleImages } = require('../cache/transformer');
+    const entityId = 'bundle';
+
+    // Fetch bundle images from ERPNext
+    const fileUrls = await fetchBundleImages();
+    
+    if (!fileUrls || fileUrls.length === 0) {
+      logger.warn('No bundle images found in ERPNext');
+      return {
+        changed: false,
+        version: null,
+        streamId: null,
+        error: 'No bundle images found',
+      };
+    }
+
+    // Wrap in ERPNext response format for transformer
+    const erpnextData = {
+      data: fileUrls.map((url) => ({ file_url: url })),
+    };
+
+    // Transform (downloads images and converts to base64)
+    const transformedData = await transformBundleImages(erpnextData);
+
+    // Compute hash
+    const newHash = computeDataHash(transformedData);
+
+    // Get existing cache
+    const existing = await getCacheHash('bundle', entityId);
+
+    // Check if changed
+    let version = '1';
+    let changed = true;
+
+    if (existing) {
+      if (existing.data_hash === newHash) {
+        changed = false;
+        logger.info('Bundle webhook: no change detected', {
+          hash: newHash,
+        });
+        return {
+          changed: false,
+          version: existing.version,
+          streamId: null,
+        };
+      }
+      version = await incrementCacheHashVersion('bundle', entityId);
+      if (!version) {
+        version = (parseInt(existing.version) + 1).toString();
+      }
+    }
+
+    // Update cache
+    const updatedAt = Date.now().toString();
+    const success = await setCacheHash('bundle', entityId, transformedData, {
+      data_hash: newHash,
+      updated_at: updatedAt,
+      version,
+    });
+
+    if (!success) {
+      throw new Error('Failed to update bundle cache');
+    }
+
+    // Add stream entry
+    const streamId = await addStreamEntry('bundle', entityId, newHash, version);
+
+    logger.info('Bundle webhook processed', {
+      changed,
+      version,
+      streamId,
+      imageCount: transformedData.bundleImages?.length || 0,
+    });
+
+    return {
+      changed: true,
+      version,
+      streamId,
+    };
+  } catch (error) {
+    logger.error('Bundle webhook processing error', {
+      error: error.message,
+      stack: error.stack,
+    });
+    throw error;
+  }
+}
+
+/**
  * Process webhook for home entity
  * Fetches App Home from ERPNext, transforms, computes hash, adds stream entry if changed
  * @returns {Promise<object>} Result object with {changed: boolean, version: string, streamId: string|null}
@@ -502,6 +598,10 @@ async function processWebhook(entityType, payload) {
 
       case 'hero': {
         return await processHeroWebhook();
+      }
+
+      case 'bundle': {
+        return await processBundleWebhook();
       }
 
       case 'home': {
