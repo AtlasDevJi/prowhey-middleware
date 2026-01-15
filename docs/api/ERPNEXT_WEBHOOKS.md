@@ -1,16 +1,20 @@
 # ERPNext Webhook Configuration Guide
 
-This document provides instructions for configuring ERPNext to send webhooks to the Prowhey Middleware when product or stock data changes.
+This document provides instructions for configuring ERPNext to send webhooks to the Prowhey Middleware when stock availability changes.
 
 ## Overview
 
 The middleware provides a unified webhook endpoint that ERPNext can call to notify about changes to:
-- **Products** (Website Items)
-- **Stock Availability** (Item stock levels)
-- **Prices** (Item prices - uses weekly snapshot, no webhook needed)
-- **Hero Images** (File doctype with is_hero=1)
-- **Bundle Images** (File doctype with is_bundle=1)
-- **App Home** (App Home doctype)
+- **Stock Availability** (Item stock levels) - **Webhooks supported for real-time updates**
+
+**Friday-Only Entities (No Webhooks Needed):**
+- **Products** (Website Items) - Updated automatically Friday 11 PM
+- **Prices** (Item prices) - Updated automatically Friday 11 PM
+- **Hero Images** (File doctype with is_hero=1) - Updated automatically Friday 11 PM
+- **Home Data** (App Home doctype) - Updated automatically Friday 11 PM
+- **Bundle Images** (File doctype with is_bundle=1) - Updated automatically Friday 11 PM
+
+These Friday-only entities are refreshed automatically via scheduled weekly snapshots on Friday evenings. No webhook configuration is needed.
 
 When ERPNext sends a webhook, the middleware:
 1. Fetches the latest data from ERPNext
@@ -41,137 +45,35 @@ When ERPNext sends a webhook, the middleware:
 
 ---
 
-## 1. Product Update Webhook
+## Friday-Only Entities (No Webhooks Needed)
 
-Trigger this webhook when a **Website Item** is created, updated, or published/unpublished in ERPNext.
+The following entities are updated automatically on **Friday evenings at 11 PM** via scheduled weekly snapshots. **No webhook configuration is needed** for these entities:
 
-### When to Trigger
+- **Products** (Website Items)
+- **Prices** (Item prices)
+- **Hero Images** (File doctype with is_hero=1)
+- **Home Data** (App Home doctype)
+- **Bundle Images** (File doctype with is_bundle=1)
 
-- Website Item is created
-- Website Item fields are modified (name, description, images, variants, etc.)
-- Website Item is published or unpublished
-- Website Item is deleted (optional - middleware will handle gracefully)
+### How It Works
 
-**Note:** If a Website Item is unpublished or deleted in ERPNext, the middleware will automatically detect it when fetching all products (e.g., via the query endpoint). You don't need to send a webhook for deletions - the middleware handles them automatically. However, if you want immediate deletion detection, you can still send a webhook (the middleware will handle it gracefully if the product doesn't exist).
+- **Scheduled Refresh:** The middleware runs a full refresh every Friday at 11 PM
+- **Hash Comparison:** Only updates cache and sync streams if data has actually changed
+- **Stream Entries:** Stream entries are only added when values differ between ERPNext and Redis
+- **TTL Backup:** Cache entries have TTL set to expire on the next Friday 11 PM as a safety net
 
-### Request Format
+### Why No Webhooks?
 
-**Method:** `POST`
+- **Cleaner:** No need to configure webhooks for every change
+- **Safer:** Avoids race conditions and ensures consistency
+- **Efficient:** Batch processing is more efficient than individual webhooks
+- **Reliable:** Weekly refresh ensures all data is up-to-date
 
-**URL:** `{BASE_URL}/api/webhooks/erpnext`
-
-**Headers:**
-```
-Content-Type: application/json
-```
-
-**Request Body:**
-```json
-{
-  "entity_type": "product",
-  "erpnextName": "WEB-ITM-0002"
-}
-```
-
-### Field Descriptions
-
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `entity_type` | string | Yes | Must be `"product"` |
-| `erpnextName` | string | Yes | The ERPNext `name` field of the Website Item (e.g., `WEB-ITM-0002`) |
-
-### Example: ERPNext Webhook Configuration
-
-In ERPNext, configure a **Webhook** document:
-
-**Webhook Name:** `Product Update`
-
-**Request URL:** `https://your-domain.com/api/webhooks/erpnext`
-
-**Request Method:** `POST`
-
-**Request Headers:**
-```
-Content-Type: application/json
-```
-
-**Request Body (Jinja Template):**
-```json
-{
-  "entity_type": "product",
-  "erpnextName": "{{ doc.name }}"
-}
-```
-
-**Webhook Conditions:**
-- **DocType:** `Website Item`
-- **Trigger:** `on_update` (or `after_insert`, `on_submit`, etc.)
-
-### Response Format
-
-**Success Response (Data Changed):**
-```json
-{
-  "success": true,
-  "message": "product webhook processed successfully",
-  "changed": true,
-  "version": "2",
-  "streamId": "1768469419660-0",
-  "entity_type": "product"
-}
-```
-
-**Success Response (No Change Detected):**
-```json
-{
-  "success": true,
-  "message": "product webhook processed successfully",
-  "changed": false,
-  "version": "1",
-  "streamId": null,
-  "entity_type": "product"
-}
-```
-
-**Error Response:**
-```json
-{
-  "success": false,
-  "error": "Bad Request",
-  "message": "Invalid payload for entity_type"
-}
-```
-
-### Response Field Descriptions
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `success` | boolean | `true` if webhook was processed successfully |
-| `message` | string | Human-readable status message |
-| `changed` | boolean | `true` if data changed, `false` if no change detected |
-| `version` | string | Current version number of the cached data |
-| `streamId` | string \| null | Stream entry ID if data changed, `null` if no change |
-| `entity_type` | string | The entity type that was processed |
-
-### What Happens Behind the Scenes
-
-1. Middleware receives webhook with `erpnextName`
-2. Fetches latest product data from ERPNext API: `/api/resource/Website Item/{erpnextName}`
-3. Transforms product data to standardized format
-4. Computes SHA-256 hash of the data
-5. Compares hash with cached data
-6. If hash differs:
-   - Updates Redis cache with new data
-   - Increments version number
-   - Adds entry to `product_changes` stream
-   - Returns `changed: true` with `streamId`
-7. If hash matches:
-   - Skips update (no change)
-   - Returns `changed: false` with `streamId: null`
+If you need to trigger an immediate refresh outside the schedule, you can use the manual refresh endpoints (see API documentation).
 
 ---
 
-## 2. Stock Availability Webhook
+## 1. Stock Availability Webhook
 
 Trigger this webhook when stock levels change for an **Item** in ERPNext (e.g., stock entry, stock reconciliation, delivery, etc.).
 
@@ -354,317 +256,11 @@ Same as Product Update Webhook (see above).
 - **Warehouse Reference:** The availability array is built based on the warehouse reference array stored in Redis. If warehouses are added/removed, the warehouse reference must be updated first (see middleware API documentation).
 - **Multiple Items:** If a transaction affects multiple items, send separate webhook calls for each item code (or use a loop in ERPNext webhook configuration).
 - **Stock Lookup:** Only warehouses with `actual_qty > 0` are considered when building the availability array.
+- **Weekly Snapshot:** In addition to webhooks, a weekly snapshot runs every Friday at 11 PM to ensure consistency. This snapshot only updates stream entries for items that differ in availability between ERPNext and Redis.
+- **Frontend Sync:** Frontend apps should check the sync stream every hour for availability updates. See [FRONTEND_INTEGRATION.md](./FRONTEND_INTEGRATION.md) for details.
+- **TTL Backup:** Stock cache entries have a 7-day TTL as a backup safety net in case the weekly snapshot fails.
 
 ---
-
-## 3. Price Updates (Weekly Snapshot)
-
-**Important:** Prices use a **weekly snapshot approach** instead of webhooks. No webhook configuration is needed for prices.
-
-### Why Weekly Snapshot?
-
-Prices are refreshed automatically via a scheduled weekly full refresh that:
-- Fetches all item prices from ERPNext for all published products
-- Compares prices with cached data using hash comparison
-- Only updates cache and sync streams if prices have changed
-- Processes items in parallel batches for performance
-- Detects manual Redis changes and updates accordingly
-
-This approach is:
-- **Cleaner:** No need to configure webhooks for every price change
-- **Safer:** Avoids race conditions and ensures consistency
-- **Efficient:** Batch processing is more efficient than individual webhooks
-- **Reliable:** Weekly refresh ensures all prices are up-to-date
-
-### How It Works
-
-1. **Scheduled Refresh:** The middleware runs a full refresh weekly (configurable)
-2. **Price Fetching:** For each unique item code from website item variants:
-   - Fetches retail price from "Standard Selling" price list
-   - Fetches wholesale price from "Wholesale Selling" price list
-   - Stores as `[retail, wholesale]` array
-3. **Change Detection:** Compares hash of price data with cached data
-4. **Stream Updates:** Only adds stream entries if prices changed
-5. **Manual Change Detection:** Detects if Redis values were manually changed
-
-### Price Data Format
-
-**Storage Format:**
-- Hash key: `hash:price:{itemCode}` with structure:
-  ```json
-  {
-    "data": { "itemCode": "OL-EN-92-rng-1kg", "prices": [29.99, 24.99] },
-    "data_hash": "...",
-    "updated_at": "...",
-    "version": "1"
-  }
-  ```
-- Simple key: `price:{itemCode}` with array: `[retail, wholesale]`
-
-**Price Array:**
-- `[0]`: Retail price (Standard Selling price list)
-- `[1]`: Wholesale price (Wholesale Selling price list)
-- If a price doesn't exist, it will be `0`
-
-### Manual Refresh
-
-If you need to refresh prices immediately (outside of the weekly schedule), you can trigger a manual refresh:
-
-**Endpoint:** `POST /api/price/update-all`
-
-**Response:**
-```json
-{
-  "success": true,
-  "total": 150,
-  "updated": 5,
-  "unchanged": 145,
-  "errors": []
-}
-```
-
-### Sync API
-
-Price changes are automatically tracked in the `price_changes` stream. Frontend apps can use the sync API to get price updates:
-
-- **Fast frequency:** Prices are included in slow-frequency sync checks
-- **Stream entries:** Created only when prices actually change
-- **Manual changes:** Detected and streamed to apps
-
-See [SYNC_API.md](./SYNC_API.md) for details on consuming price updates via the sync API.
-
-### Important Notes
-
-- **No Webhook Needed:** Prices are automatically refreshed weekly
-- **Change Detection:** Only changed prices create stream entries
-- **Manual Refresh:** Use `/api/price/update-all` endpoint if immediate refresh is needed
-- **Price Lists:** Uses "Standard Selling" for retail and "Wholesale Selling" for wholesale
-- **Item Codes:** Processes all unique item codes from all website item variants
-
----
-
-## 4. Hero Images Webhook
-
-Trigger this webhook when a **File** with `is_hero = 1` is created, updated, or when the `is_hero` field changes in ERPNext.
-
-### When to Trigger
-
-- File is created with `is_hero = 1`
-- File's `is_hero` field is changed (from 0 to 1, or 1 to 0)
-- File with `is_hero = 1` is updated
-- File with `is_hero = 1` is deleted (optional - middleware will handle gracefully)
-
-### Request Format
-
-**Method:** `POST`
-
-**URL:** `{BASE_URL}/api/webhooks/erpnext`
-
-**Headers:**
-```
-Content-Type: application/json
-```
-
-**Request Body:**
-```json
-{
-  "entity_type": "hero"
-}
-```
-
-### Field Descriptions
-
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `entity_type` | string | Yes | Must be `"hero"` |
-
-**Note:** No additional fields are required. The webhook just triggers the middleware to fetch all hero images from ERPNext.
-
-### Example: ERPNext Webhook Configuration
-
-**Webhook Name:** `Hero Images Update`
-
-**Request URL:** `https://your-domain.com/api/webhooks/erpnext`
-
-**Request Method:** `POST`
-
-**Request Headers:**
-```
-Content-Type: application/json
-```
-
-**Request Body (Jinja Template):**
-```json
-{
-  "entity_type": "hero"
-}
-```
-
-**Webhook Conditions:**
-- **DocType:** `File`
-- **Trigger:** `on_update` (or `after_insert`, `on_submit`, etc.)
-- **Optional Condition:** `doc.is_hero == 1` (only trigger when is_hero is set)
-
-### Response Format
-
-**Success Response (Data Changed):**
-```json
-{
-  "success": true,
-  "message": "hero webhook processed successfully",
-  "changed": true,
-  "version": "2",
-  "streamId": "1768469419663-0",
-  "entity_type": "hero"
-}
-```
-
-**Success Response (No Change Detected):**
-```json
-{
-  "success": true,
-  "message": "hero webhook processed successfully",
-  "changed": false,
-  "version": "1",
-  "streamId": null,
-  "entity_type": "hero"
-}
-```
-
-### What Happens Behind the Scenes
-
-1. Middleware receives webhook with `entity_type: "hero"`
-2. Fetches all hero images from ERPNext File API: `/api/resource/File?filters=[["is_hero", "=", 1]]&limit=10`
-3. Downloads each image from its URL
-4. Converts images to base64 data URLs
-5. Computes SHA-256 hash of the image data array
-6. Compares hash with cached data
-7. If hash differs:
-   - Updates Redis cache with new image data
-   - Increments version number
-   - Adds entry to `hero_changes` stream
-   - Returns `changed: true` with `streamId`
-8. If hash matches:
-   - Skips update (no change)
-   - Returns `changed: false` with `streamId: null`
-
----
-
-## 5. Bundle Images Webhook
-
-Trigger this webhook when a **File** with `is_bundle = 1` is created, updated, or when the `is_bundle` field changes in ERPNext.
-
-### When to Trigger
-
-- File is created with `is_bundle = 1`
-- File's `is_bundle` field is changed (from 0 to 1, or 1 to 0)
-- File with `is_bundle = 1` is updated
-- File with `is_bundle = 1` is deleted (optional - middleware will handle gracefully)
-
-### Request Format
-
-**Method:** `POST`
-
-**URL:** `{BASE_URL}/api/webhooks/erpnext`
-
-**Headers:**
-```
-Content-Type: application/json
-```
-
-**Request Body:**
-```json
-{
-  "entity_type": "bundle"
-}
-```
-
-### Field Descriptions
-
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `entity_type` | string | Yes | Must be `"bundle"` |
-
-**Note:** No additional fields are required. The webhook just triggers the middleware to fetch all bundle images from ERPNext.
-
-### Example: ERPNext Webhook Configuration
-
-**Webhook Name:** `Bundle Images Update`
-
-**Request URL:** `https://your-domain.com/api/webhooks/erpnext`
-
-**Request Method:** `POST`
-
-**Request Headers:**
-```
-Content-Type: application/json
-```
-
-**Request Body (Jinja Template):**
-```json
-{
-  "entity_type": "bundle"
-}
-```
-
-**Webhook Conditions:**
-- **DocType:** `File`
-- **Trigger:** `on_update` (or `after_insert`, `on_submit`, etc.)
-- **Optional Condition:** `doc.is_bundle == 1` (only trigger when is_bundle is set)
-
-### Response Format
-
-**Success Response (Data Changed):**
-```json
-{
-  "success": true,
-  "message": "bundle webhook processed successfully",
-  "changed": true,
-  "version": "2",
-  "streamId": "1768469419663-0",
-  "entity_type": "bundle"
-}
-```
-
-**Success Response (No Change Detected):**
-```json
-{
-  "success": true,
-  "message": "bundle webhook processed successfully",
-  "changed": false,
-  "version": "1",
-  "streamId": null,
-  "entity_type": "bundle"
-}
-```
-
-### What Happens Behind the Scenes
-
-1. Middleware receives webhook with `entity_type: "bundle"`
-2. Fetches all bundle images from ERPNext File API: `/api/resource/File?filters=[["is_bundle", "=", 1]]&limit=10`
-3. Downloads each image from its URL
-4. Converts images to base64 data URLs
-5. Computes SHA-256 hash of the image data array
-6. Compares hash with cached data
-7. If hash differs:
-   - Updates Redis cache with new image data
-   - Increments version number
-   - Adds entry to `bundle_changes` stream
-   - Returns `changed: true` with `streamId`
-8. If hash matches:
-   - Skips update (no change)
-   - Returns `changed: false` with `streamId: null`
-
----
-
-## 6. App Home Webhook
-
-Trigger this webhook when an **App Home** record is created, updated, or submitted in ERPNext.
-
-### When to Trigger
-
-- App Home record is created
-- App Home fields are modified (top_sellers, new_arrivals, most_viewed, top_offers, html1-3, etc.)
 - App Home record is submitted
 - App Home record is deleted (optional - middleware will handle gracefully)
 
@@ -806,14 +402,9 @@ ERPNext webhooks have built-in retry mechanisms. If a webhook fails:
 
 ### 1. Webhook Timing
 
-- **Product Updates:** Trigger on `on_submit` or `on_update` to ensure data is finalized
-- **Stock Updates:** Trigger on `on_submit` to ensure stock transactions are committed
-- **Price Updates:** Uses weekly snapshot (no webhook needed) - prices are refreshed automatically via scheduled full refresh
-- **Hero Images:** Trigger on `on_update` when `is_hero` field changes
-- **Bundle Images:** Trigger on `on_update` when `is_bundle` field changes
-- **App Home:** Trigger on `on_submit` or `on_update` to ensure data is finalized
+- **Stock Updates:** Trigger on `on_submit` to ensure stock transactions are committed. This provides real-time availability updates.
 
-**Note:** Prices use a weekly snapshot approach instead of webhooks for cleaner and safer operation. The middleware automatically fetches all prices during the weekly full refresh, comparing with cached data and only updating if changes are detected.
+**Note:** Friday-only entities (products, prices, hero images, bundle images, home data) are updated automatically on Friday evenings at 11 PM via scheduled weekly snapshots. No webhook configuration is needed for these entities. The middleware automatically fetches all data during the weekly full refresh, comparing with cached data and only updating if changes are detected.
 
 ### 2. Avoiding Duplicate Webhooks
 
@@ -846,7 +437,7 @@ ERPNext webhooks have built-in retry mechanisms. If a webhook fails:
 - [ ] Set Request Method to `POST`
 - [ ] Add `Content-Type: application/json` header
 - [ ] Configure Request Body with correct Jinja template
-- [ ] Set appropriate DocType (Website Item, Stock Entry, File, App Home, etc.)
+- [ ] Set appropriate DocType (Stock Entry, Delivery Note, Stock Reconciliation, etc.)
 - [ ] Set appropriate Trigger (on_submit, on_update, etc.)
 - [ ] Test webhook using ERPNext's "Test" button
 - [ ] Verify webhook appears in ERPNext webhook logs

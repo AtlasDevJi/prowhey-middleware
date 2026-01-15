@@ -66,33 +66,22 @@ const webhookPriceUpdateSchema = z.object({
   invalidateCache: z.boolean().optional().default(false),
 });
 
-// Unified ERPNext webhook body (supports product, price, stock, hero, bundle, home)
+// Unified ERPNext webhook body (supports stock and bundle)
+// Note: Friday-only entities (product, price, hero, home) are updated automatically on Friday evenings - no webhooks needed
 const webhookErpnextSchema = z
   .object({
-    entity_type: z.enum(['product', 'price', 'stock', 'hero', 'bundle', 'home']),
-    // Product fields
-    erpnextName: erpnextNameSchema.optional(),
-    // Price fields (uses itemCode, fetches prices from ERPNext)
-    itemCode: itemCodeSchema.optional(),
+    entity_type: z.enum(['stock', 'bundle']),
     // Stock fields
-    // (itemCode is shared between price and stock)
+    itemCode: itemCodeSchema.optional(),
   })
   .refine(
     (data) => {
-      // Product requires erpnextName
-      if (data.entity_type === 'product') {
-        return !!data.erpnextName;
-      }
-      // Price requires itemCode only (prices fetched from ERPNext)
-      if (data.entity_type === 'price') {
-        return !!data.itemCode;
-      }
       // Stock requires itemCode only (availability fetched from ERPNext)
       if (data.entity_type === 'stock') {
         return !!data.itemCode;
       }
-      // Hero, bundle, and home require no fields (webhook just triggers fetch)
-      if (data.entity_type === 'hero' || data.entity_type === 'bundle' || data.entity_type === 'home') {
+      // Bundle requires no fields (webhook just triggers fetch)
+      if (data.entity_type === 'bundle') {
         return true;
       }
       return true;

@@ -1,7 +1,7 @@
 const { getRedisClient } = require('./client');
 const { getCacheKey, getQueryCacheKey } = require('../../utils/data-types');
 const { logger } = require('../logger');
-const { getEntityTTL, getQueryTTL } = require('../../config/cache');
+const { getEntityTTL, getEntityTTLWithDate, getQueryTTL } = require('../../config/cache');
 
 /**
  * Get cached entity from Redis (stored as JSON string)
@@ -37,7 +37,7 @@ async function setCache(entityType, entityId, data) {
   try {
     const redis = getRedisClient();
     const cacheKey = getCacheKey(entityType, entityId);
-    const ttl = getEntityTTL(entityType);
+    const ttl = getEntityTTLWithDate(entityType);
 
     if (!data || typeof data !== 'object') {
       return false;
@@ -46,12 +46,8 @@ async function setCache(entityType, entityId, data) {
     // Store as JSON string
     const jsonString = JSON.stringify(data);
     
-    // Use setex only if TTL > 0, otherwise use set (persistent)
-    if (ttl > 0) {
-      await redis.setex(cacheKey, ttl, jsonString);
-    } else {
-      await redis.set(cacheKey, jsonString);
-    }
+    // Always set TTL (Friday-only entities and stock now have TTL)
+    await redis.setex(cacheKey, ttl, jsonString);
 
     return true;
   } catch (error) {
@@ -91,7 +87,7 @@ async function updateCache(entityType, entityId, updates) {
   try {
     const redis = getRedisClient();
     const cacheKey = getCacheKey(entityType, entityId);
-    const ttl = getEntityTTL(entityType);
+    const ttl = getEntityTTLWithDate(entityType);
 
     // Get existing data
     const existing = await getCache(entityType, entityId);
@@ -105,12 +101,8 @@ async function updateCache(entityType, entityId, updates) {
     // Store updated data
     const jsonString = JSON.stringify(updated);
     
-    // Use setex only if TTL > 0, otherwise use set (persistent)
-    if (ttl > 0) {
-      await redis.setex(cacheKey, ttl, jsonString);
-    } else {
-      await redis.set(cacheKey, jsonString);
-    }
+    // Always set TTL (Friday-only entities and stock now have TTL)
+    await redis.setex(cacheKey, ttl, jsonString);
 
     return true;
   } catch (error) {
@@ -449,7 +441,7 @@ async function setCacheHash(entityType, entityId, data, metadata = {}) {
     const redis = getRedisClient();
     // Use separate key namespace for hash-based cache to avoid clashing with simple string keys
     const cacheKey = `hash:${getCacheKey(entityType, entityId)}`;
-    const ttl = getEntityTTL(entityType);
+    const ttl = getEntityTTLWithDate(entityType);
 
     if (!data || typeof data !== 'object') {
       return false;
@@ -466,14 +458,8 @@ async function setCacheHash(entityType, entityId, data, metadata = {}) {
     // Set hash fields
     await redis.hset(cacheKey, hashFields);
 
-    // Set TTL on the hash key (only if TTL > 0, otherwise persistent)
-    // If TTL is 0, explicitly remove any existing TTL to ensure persistence
-    if (ttl > 0) {
-      await redis.expire(cacheKey, ttl);
-    } else {
-      // Remove any existing TTL to ensure key is persistent
-      await redis.persist(cacheKey);
-    }
+    // Always set TTL (Friday-only entities and stock now have TTL)
+    await redis.expire(cacheKey, ttl);
 
     return true;
   } catch (error) {

@@ -206,9 +206,15 @@ Checks for updates on high-frequency entities (views, comments, user profile). P
 
 **Endpoint:** `POST /api/sync/check-medium`
 
-Checks for updates on medium-frequency entities (stock, notifications, announcements). Poll hourly.
+Checks for updates on medium-frequency entities (stock, notifications, announcements). **Poll hourly** to ensure real-time availability updates.
 
 **Entity Types:** `stock`, `notification`, `announcement`
+
+**Important for Stock Availability:**
+- Stock availability is updated in real-time via webhooks when stock changes in ERPNext
+- A weekly snapshot runs every Friday at 11 PM to ensure consistency
+- **Apps should check the sync stream every hour** to stay up-to-date with availability changes
+- The weekly snapshot only updates stream entries for items that differ in availability between ERPNext and Redis
 
 **Request Body:**
 ```json
@@ -230,9 +236,16 @@ Checks for updates on medium-frequency entities (stock, notifications, announcem
 
 **Endpoint:** `POST /api/sync/check-slow`
 
-Checks for updates on low-frequency entities (products, prices, hero list, bundle list). Poll daily or on-demand.
+Checks for updates on low-frequency entities (products, prices, hero list, bundle list, home data). Poll daily or on-demand.
 
-**Entity Types:** `product`, `price`, `hero`, `bundle`
+**Entity Types:** `product`, `price`, `hero`, `bundle`, `home`
+
+**Important for Friday-Only Entities:**
+- Products, prices, hero images, bundle images, and home data are updated automatically on **Friday evenings at 11 PM** via scheduled weekly snapshots
+- These entities use a weekly snapshot approach instead of webhooks for cleaner and safer operation
+- The weekly snapshot only updates cache and sync streams if data has actually changed (hash comparison)
+- Cache entries have TTL set to expire on the next Friday 11 PM as a backup safety net
+- Apps can poll daily or on-demand (e.g., on app launch) for these entities
 
 **Request Body:**
 ```json
@@ -497,6 +510,9 @@ redis-cli SET warehouses:reference '["Warehouse 1","Warehouse 2","Warehouse 3"]'
 - Each item code has its own stock availability (different flavors of the same product have different item codes)
 - The availability array is computed on-demand when webhooks are triggered or during full refresh
 - Stock updates are included in medium-frequency sync (`/api/sync/check-medium`)
+- **Sync Frequency:** Apps should check the sync stream **every hour** for stock availability updates
+- **Weekly Snapshot:** A weekly snapshot runs every Friday at 11 PM to ensure consistency, only updating stream entries for items that differ
+- **Webhooks:** Real-time webhooks provide immediate updates when stock changes in ERPNext
 
 ---
 
@@ -697,8 +713,9 @@ All update objects include these metadata fields:
 ### Recommended Polling Frequencies
 
 - **Fast-frequency** (`/api/sync/check-fast`): Every 5-15 minutes
-- **Medium-frequency** (`/api/sync/check-medium`): Every hour
+- **Medium-frequency** (`/api/sync/check-medium`): **Every hour** (especially important for stock availability to catch real-time webhook updates)
 - **Slow-frequency** (`/api/sync/check-slow`): Daily or on-demand (e.g., on app launch)
+  - Note: Friday-only entities (products, prices, hero, bundle, home) are updated automatically on Friday evenings, so daily polling is sufficient
 
 ## Error Handling
 

@@ -637,6 +637,7 @@ function ProductDetailScreen({ itemCode }) {
 - Availability array is binary (0 = no stock, 1 = stock available)
 - Each index corresponds to warehouse reference array index
 - Fetch warehouse reference separately (once a month)
+- **Important:** Stock availability is updated in real-time via webhooks and also via a weekly snapshot on Friday evenings. To ensure your app stays up-to-date with availability changes, **check the sync stream every hour** for stock availability updates. See the [Sync API Integration](#sync-api-integration) section for details on how to implement hourly sync checks.
 
 ---
 
@@ -1009,7 +1010,7 @@ async function fetchWithErrorHandling(url, options = {}) {
 - **Use appropriate refresh rates**:
   - Home page data: 1 hour
   - Product details: 1 hour
-  - Stock availability: 1 hour
+  - Stock availability: 1 hour (also check sync stream hourly for real-time updates)
   - Item prices: 1 hour
   - Warehouse reference: 30 days
 - **Fallback to cached data** - If API call fails, use cached data even if expired

@@ -2,9 +2,9 @@ const cron = require('node-cron');
 const { performFullRefresh } = require('../sync/full-refresh');
 const { logger } = require('../logger');
 
-// Default: Saturday at 6 AM (day 6, hour 6)
-const DEFAULT_DAY = parseInt(process.env.SYNC_FULL_REFRESH_DAY || '6', 10);
-const DEFAULT_HOUR = parseInt(process.env.SYNC_FULL_REFRESH_HOUR || '6', 10);
+// Default: Friday at 11 PM (day 5, hour 23)
+const DEFAULT_DAY = parseInt(process.env.SYNC_FULL_REFRESH_DAY || '5', 10);
+const DEFAULT_HOUR = parseInt(process.env.SYNC_FULL_REFRESH_HOUR || '23', 10);
 
 /**
  * Build cron expression for full refresh
