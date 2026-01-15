@@ -10,6 +10,7 @@ This guide provides comprehensive instructions for integrating the Prowhey Middl
 - [Home Page Integration](#home-page-integration)
 - [Product Integration](#product-integration)
 - [Stock Availability Integration](#stock-availability-integration)
+- [Analytics Integration](#analytics-integration)
 - [Sync API Integration](#sync-api-integration)
 - [Error Handling](#error-handling)
 - [Best Practices](#best-practices)
@@ -46,10 +47,12 @@ All endpoints follow a **detail-page-driven caching strategy** to minimize API c
 - Product endpoints (`/api/resource/Website Item`)
 - Stock endpoints (`/api/stock/:itemCode`)
 - Warehouse reference (`/api/stock/warehouses/reference`)
+- Analytics read endpoints (`GET /api/analytics/product/:name/view`, `GET /api/analytics/product/:name/comment`, `GET /api/analytics/product/:name/rating`)
 
 **Protected Endpoints** (Require JWT token):
 - Sync endpoints (`/api/sync/*`)
-- Analytics endpoints (`/api/analytics/*`)
+- Analytics write endpoints (optional auth - works with or without token)
+- Wishlist endpoints (`GET /api/analytics/wishlist`, `POST /api/analytics/wishlist/add`, `POST /api/analytics/wishlist/remove`)
 - User profile endpoints (`/api/auth/*`)
 
 **Authentication Header:**
@@ -732,6 +735,406 @@ function ProductDetailScreen({ itemCode }) {
 
 ---
 
+## Analytics Integration
+
+The analytics system tracks user interactions and provides both public endpoints (accessible to all users) and analytics-only endpoints (write-only for data collection).
+
+### Authentication
+
+**Public Analytics Endpoints** (No authentication required):
+- `GET /api/analytics/product/:name/view` - Get view count
+- `GET /api/analytics/product/:name/comment` - Get comments
+- `GET /api/analytics/product/:name/rating` - Get ratings
+
+**Optional Authentication** (Works with or without JWT token):
+- Most analytics write endpoints accept optional authentication
+- If authenticated, events are tracked per-user
+- If not authenticated, events are tracked anonymously (using deviceId/sessionId)
+
+**Required Authentication**:
+- `GET /api/analytics/wishlist` - Get user's wishlist
+- `POST /api/analytics/wishlist/add` - Add to wishlist
+- `POST /api/analytics/wishlist/remove` - Remove from wishlist
+
+### Public Analytics Endpoints
+
+#### Views
+
+**Track View:**
+```javascript
+// POST /api/analytics/product/:name/view
+async function trackProductView(productName, metadata = {}) {
+  const response = await fetch(`${BASE_URL}/api/analytics/product/${productName}/view`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      // Optional: Include Authorization header if user is logged in
+      ...(accessToken && { 'Authorization': `Bearer ${accessToken}` }),
+    },
+    body: JSON.stringify({
+      duration: metadata.duration, // Optional: view duration in milliseconds
+      source: metadata.source, // Optional: 'home', 'search', 'category', etc.
+    }),
+  });
+  
+  const result = await response.json();
+  return result.views; // New view count
+}
+```
+
+**Get View Count:**
+```javascript
+// GET /api/analytics/product/:name/view
+async function getProductViews(productName) {
+  const response = await fetch(`${BASE_URL}/api/analytics/product/${productName}/view`);
+  const result = await response.json();
+  return result.views;
+}
+```
+
+#### Comments
+
+**Add Comment:**
+```javascript
+// POST /api/analytics/product/:name/comment
+async function addComment(productName, text, author = 'anonymous') {
+  const response = await fetch(`${BASE_URL}/api/analytics/product/${productName}/comment`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      text,
+      author,
+      timestamp: new Date().toISOString(),
+    }),
+  });
+  
+  const result = await response.json();
+  return result.comments; // Updated comments array
+}
+```
+
+**Get Comments:**
+```javascript
+// GET /api/analytics/product/:name/comment
+async function getComments(productName) {
+  const response = await fetch(`${BASE_URL}/api/analytics/product/${productName}/comment`);
+  const result = await response.json();
+  return result.comments; // Array of comments
+}
+```
+
+#### Ratings
+
+**Add Rating:**
+```javascript
+// POST /api/analytics/product/:name/rating
+async function addRating(productName, starRating) {
+  const response = await fetch(`${BASE_URL}/api/analytics/product/${productName}/rating`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      starRating: starRating, // 1-5
+    }),
+  });
+  
+  const result = await response.json();
+  return {
+    ratingBreakdown: result.ratingBreakdown,
+    reviewCount: result.reviewCount,
+  };
+}
+```
+
+**Get Ratings:**
+```javascript
+// GET /api/analytics/product/:name/rating
+async function getRatings(productName) {
+  const response = await fetch(`${BASE_URL}/api/analytics/product/${productName}/rating`);
+  const result = await response.json();
+  return {
+    ratingBreakdown: result.ratingBreakdown,
+    reviewCount: result.reviewCount,
+  };
+}
+
+// Calculate average rating
+function calculateAverageRating(ratingBreakdown, reviewCount) {
+  if (reviewCount === 0) return 0;
+  const total = 
+    ratingBreakdown['1'] * 1 +
+    ratingBreakdown['2'] * 2 +
+    ratingBreakdown['3'] * 3 +
+    ratingBreakdown['4'] * 4 +
+    ratingBreakdown['5'] * 5;
+  return total / reviewCount;
+}
+```
+
+### Analytics-Only Endpoints (Write-Only)
+
+These endpoints collect data for analytics but don't expose read endpoints to app users. Data is collected for internal analysis.
+
+#### Batch Events
+
+**Recommended:** Use batch endpoint to send multiple events in one request for efficiency.
+
+```javascript
+// POST /api/analytics/batch
+async function sendBatchEvents(events, sessionId = null, deviceId = null) {
+  const response = await fetch(`${BASE_URL}/api/analytics/batch`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      // Optional: Include Authorization header if user is logged in
+      ...(accessToken && { 'Authorization': `Bearer ${accessToken}` }),
+      ...(deviceId && { 'X-Device-ID': deviceId }),
+      ...(sessionId && { 'X-Session-ID': sessionId }),
+    },
+    body: JSON.stringify({
+      events: [
+        {
+          type: 'view',
+          entity_id: 'WEB-ITM-0001',
+          metadata: { duration: 5000, source: 'home' },
+        },
+        {
+          type: 'search',
+          term: 'protein powder',
+          filters: { category: 'supplements' },
+          results_count: 15,
+          clicked_results: ['WEB-ITM-0001'],
+        },
+        {
+          type: 'interaction',
+          interaction_type: 'image_view',
+          product_name: 'WEB-ITM-0001',
+          metadata: { image_index: 2 },
+        },
+      ],
+      session_id: sessionId,
+      device_id: deviceId,
+    }),
+  });
+  
+  const result = await response.json();
+  return result; // { success: true, processed: 3, failed: 0 }
+}
+```
+
+**Best Practice:** Collect events in your app and send them in batches (e.g., every 10 events or every 30 seconds) to reduce API calls.
+
+#### Search Tracking
+
+```javascript
+// POST /api/analytics/search
+async function trackSearch(term, filters = {}, resultsCount = 0, clickedResults = []) {
+  const response = await fetch(`${BASE_URL}/api/analytics/search`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...(accessToken && { 'Authorization': `Bearer ${accessToken}` }),
+      ...(deviceId && { 'X-Device-ID': deviceId }),
+      ...(sessionId && { 'X-Session-ID': sessionId }),
+    },
+    body: JSON.stringify({
+      term,
+      filters,
+      results_count: resultsCount,
+      clicked_results: clickedResults,
+    }),
+  });
+  
+  return await response.json();
+}
+```
+
+#### Wishlist (Authenticated)
+
+```javascript
+// POST /api/analytics/wishlist/add
+async function addToWishlist(productName) {
+  const response = await fetch(`${BASE_URL}/api/analytics/wishlist/add`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${accessToken}`, // Required
+    },
+    body: JSON.stringify({
+      product_name: productName,
+    }),
+  });
+  
+  const result = await response.json();
+  return result.wishlist; // Updated wishlist array
+}
+
+// GET /api/analytics/wishlist
+async function getWishlist() {
+  const response = await fetch(`${BASE_URL}/api/analytics/wishlist`, {
+    headers: {
+      'Authorization': `Bearer ${accessToken}`, // Required
+    },
+  });
+  
+  const result = await response.json();
+  return result.wishlist; // Array of product names
+}
+
+// POST /api/analytics/wishlist/remove
+async function removeFromWishlist(productName) {
+  const response = await fetch(`${BASE_URL}/api/analytics/wishlist/remove`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${accessToken}`, // Required
+    },
+    body: JSON.stringify({
+      product_name: productName,
+    }),
+  });
+  
+  const result = await response.json();
+  return result.wishlist; // Updated wishlist array
+}
+```
+
+#### App Session Tracking
+
+```javascript
+// POST /api/analytics/session/open
+async function trackAppOpen(sessionId = null, metadata = {}) {
+  const response = await fetch(`${BASE_URL}/api/analytics/session/open`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...(accessToken && { 'Authorization': `Bearer ${accessToken}` }),
+    },
+    body: JSON.stringify({
+      session_id: sessionId || generateSessionId(),
+      metadata: {
+        heartbeatInterval: metadata.heartbeatInterval || 30000, // 30 seconds
+      },
+    }),
+  });
+  
+  const result = await response.json();
+  return result.sessionId; // Store this for heartbeat/close
+}
+
+// POST /api/analytics/session/heartbeat
+async function trackHeartbeat(sessionId, metadata = {}) {
+  const response = await fetch(`${BASE_URL}/api/analytics/session/heartbeat`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...(accessToken && { 'Authorization': `Bearer ${accessToken}` }),
+    },
+    body: JSON.stringify({
+      session_id: sessionId,
+      metadata,
+    }),
+  });
+  
+  return await response.json();
+}
+
+// POST /api/analytics/session/close
+async function trackAppClose(sessionId, metadata = {}) {
+  const response = await fetch(`${BASE_URL}/api/analytics/session/close`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...(accessToken && { 'Authorization': `Bearer ${accessToken}` }),
+    },
+    body: JSON.stringify({
+      session_id: sessionId,
+      metadata,
+    }),
+  });
+  
+  return await response.json();
+}
+
+// Example: Session lifecycle management
+let currentSessionId = null;
+let heartbeatInterval = null;
+
+function startSession() {
+  trackAppOpen().then((sessionId) => {
+    currentSessionId = sessionId;
+    
+    // Send heartbeat every 30 seconds
+    heartbeatInterval = setInterval(() => {
+      trackHeartbeat(currentSessionId);
+    }, 30000);
+  });
+}
+
+function endSession() {
+  if (heartbeatInterval) {
+    clearInterval(heartbeatInterval);
+    heartbeatInterval = null;
+  }
+  
+  if (currentSessionId) {
+    trackAppClose(currentSessionId);
+    currentSessionId = null;
+  }
+}
+
+// Call on app lifecycle events
+AppState.addEventListener('change', (nextAppState) => {
+  if (nextAppState === 'active') {
+    startSession();
+  } else if (nextAppState === 'background' || nextAppState === 'inactive') {
+    endSession();
+  }
+});
+```
+
+#### Product Interactions
+
+```javascript
+// POST /api/analytics/interaction
+async function trackInteraction(type, productName, metadata = {}) {
+  const response = await fetch(`${BASE_URL}/api/analytics/interaction`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...(accessToken && { 'Authorization': `Bearer ${accessToken}` }),
+    },
+    body: JSON.stringify({
+      type: type, // 'image_view', 'variant_select', or 'share'
+      product_name: productName,
+      metadata: metadata, // e.g., { image_index: 2, variant: '5lb' }
+    }),
+  });
+  
+  return await response.json();
+}
+
+// Example usage
+trackInteraction('image_view', 'WEB-ITM-0001', { image_index: 2 });
+trackInteraction('variant_select', 'WEB-ITM-0001', { variant: '5lb' });
+trackInteraction('share', 'WEB-ITM-0001', { platform: 'whatsapp' });
+```
+
+### Analytics Best Practices
+
+1. **Batch Events**: Collect multiple events and send them in batches using the batch endpoint
+2. **Optional Authentication**: Include JWT token when available for per-user tracking
+3. **Session Management**: Track app open/close and send heartbeats while app is active
+4. **Public vs Analytics-Only**: 
+   - Use public endpoints (views, comments, ratings) for displaying data to users
+   - Use analytics-only endpoints for data collection (no read access needed)
+5. **Error Handling**: Analytics failures shouldn't block user experience - handle errors gracefully
+
+---
+
 ## Sync API Integration
 
 The sync API provides efficient incremental synchronization. See [SYNC_API.md](./SYNC_API.md) for complete documentation.
@@ -1141,42 +1544,105 @@ export default HomeScreen;
 ### Product Detail Screen Component
 
 ```javascript
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { View, Text, ScrollView } from 'react-native';
 import { getProduct } from './api/product';
 import { getStockAvailability } from './api/stock';
 import { getItemPrice } from './api/price';
+import { trackProductView, getProductViews, getComments, getRatings, addComment, addRating } from './api/analytics';
 
 function ProductDetailScreen({ route }) {
   const { erpnextName, itemCode } = route.params;
   const [product, setProduct] = useState(null);
   const [stockData, setStockData] = useState(null);
   const [prices, setPrices] = useState([0, 0]);
+  const [views, setViews] = useState(0);
+  const [comments, setComments] = useState([]);
+  const [ratings, setRatings] = useState({ ratingBreakdown: {}, reviewCount: 0 });
   const [loading, setLoading] = useState(true);
+  const viewStartTime = useRef(Date.now());
   
   useEffect(() => {
     loadProductData();
+    trackView(); // Track view when screen opens
+    
+    // Track view duration when component unmounts
+    return () => {
+      const duration = Date.now() - viewStartTime.current;
+      trackProductView(erpnextName, null, { duration, source: 'product_detail' });
+    };
   }, [erpnextName, itemCode]);
   
   async function loadProductData() {
     try {
       setLoading(true);
       
-      // Fetch product, stock, and price in parallel
-      const [productData, stock, priceArray] = await Promise.all([
+      // Fetch product, stock, price, and analytics in parallel
+      const [productData, stock, priceArray, viewCount, commentsData, ratingsData] = await Promise.all([
         getProduct(erpnextName),
         getStockAvailability(itemCode),
-        getItemPrice(itemCode)
+        getItemPrice(itemCode),
+        getProductViews(erpnextName),
+        getComments(erpnextName),
+        getRatings(erpnextName)
       ]);
       
       setProduct(productData);
       setStockData(stock);
       setPrices(priceArray || [0, 0]);
+      setViews(viewCount);
+      setComments(commentsData);
+      setRatings(ratingsData);
     } catch (error) {
       console.error('Error loading product:', error);
     } finally {
       setLoading(false);
     }
+  }
+  
+  async function trackView() {
+    try {
+      // Track view with metadata
+      await trackProductView(erpnextName, null, {
+        source: 'product_detail',
+      });
+    } catch (error) {
+      // Don't block UI if analytics fails
+      console.warn('Failed to track view:', error);
+    }
+  }
+  
+  async function handleAddComment(text) {
+    try {
+      const updatedComments = await addComment(erpnextName, text);
+      setComments(updatedComments);
+    } catch (error) {
+      console.error('Error adding comment:', error);
+    }
+  }
+  
+  async function handleAddRating(starRating) {
+    try {
+      const result = await addRating(erpnextName, starRating);
+      setRatings({
+        ratingBreakdown: result.ratingBreakdown,
+        reviewCount: result.reviewCount,
+      });
+    } catch (error) {
+      console.error('Error adding rating:', error);
+    }
+  }
+  
+  function calculateAverageRating() {
+    const { ratingBreakdown, reviewCount } = ratings;
+    if (reviewCount === 0) return 0;
+    const total = 
+      ratingBreakdown['1'] * 1 +
+      ratingBreakdown['2'] * 2 +
+      ratingBreakdown['3'] * 3 +
+      ratingBreakdown['4'] * 4 +
+      ratingBreakdown['5'] * 5;
+    return total / reviewCount;
   }
   
   if (loading) {
@@ -1188,11 +1654,25 @@ function ProductDetailScreen({ route }) {
   }
   
   const [retail, wholesale] = prices;
+  const averageRating = calculateAverageRating();
   
   return (
     <ScrollView>
       <Text>{product.item_name}</Text>
       <Text>{product.description}</Text>
+      
+      {/* Views */}
+      <Text>{views} views</Text>
+      
+      {/* Ratings */}
+      <View>
+        <Text>Rating: {averageRating.toFixed(1)} ({ratings.reviewCount} reviews)</Text>
+        {/* Star rating component - allow user to rate */}
+        <StarRatingComponent 
+          onRate={handleAddRating}
+          currentRating={averageRating}
+        />
+      </View>
       
       {/* Prices */}
       <View>
@@ -1211,6 +1691,19 @@ function ProductDetailScreen({ route }) {
           ))}
         </View>
       )}
+      
+      {/* Comments */}
+      <View>
+        <Text>Comments ({comments.length})</Text>
+        {comments.map((comment) => (
+          <View key={comment.id}>
+            <Text>{comment.author}: {comment.text}</Text>
+            <Text>{new Date(comment.timestamp).toLocaleDateString()}</Text>
+          </View>
+        ))}
+        {/* Comment input component */}
+        <CommentInput onSubmit={handleAddComment} />
+      </View>
     </ScrollView>
   );
 }

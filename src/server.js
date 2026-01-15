@@ -157,6 +157,13 @@ if (process.env.ENABLE_SCHEDULED_REFRESH !== 'false') {
   console.log('Weekly full refresh scheduler started');
 }
 
+// Start scheduled analytics aggregation (daily)
+const { startScheduledAggregation } = require('./services/scheduled/analytics-aggregator');
+if (process.env.ENABLE_ANALYTICS_AGGREGATION !== 'false') {
+  startScheduledAggregation();
+  console.log('Analytics aggregation scheduler started');
+}
+
 // Start server
 const server = app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);

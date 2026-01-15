@@ -43,6 +43,62 @@ const analyticsCommentSchema = z.object({
   // Allow additional fields to pass through
 }).passthrough();
 
+// Search request body
+const analyticsSearchSchema = z.object({
+  term: z.string().min(1).max(200).trim(),
+  filters: z.record(z.any()).optional(),
+  results_count: z.number().int().min(0).optional(),
+  clicked_results: z.array(z.string()).optional(),
+});
+
+// Wishlist request body
+const analyticsWishlistSchema = z.object({
+  product_name: erpnextNameSchema,
+});
+
+// Session request body
+const analyticsSessionSchema = z.object({
+  session_id: z.string().uuid().optional(),
+  metadata: z.record(z.any()).optional(),
+});
+
+// Interaction request body
+const analyticsInteractionSchema = z.object({
+  type: z.enum(['image_view', 'variant_select', 'share']),
+  product_name: erpnextNameSchema,
+  metadata: z.record(z.any()).optional(),
+});
+
+// Batch event schema
+const analyticsBatchEventSchema = z.object({
+  type: z.enum([
+    'view',
+    'search',
+    'wishlist_add',
+    'wishlist_remove',
+    'interaction',
+    'session_open',
+    'session_close',
+    'session_heartbeat',
+  ]),
+  entity_id: z.string().optional(),
+  product_name: z.string().optional(),
+  term: z.string().optional(),
+  filters: z.record(z.any()).optional(),
+  results_count: z.number().int().min(0).optional(),
+  clicked_results: z.array(z.string()).optional(),
+  interaction_type: z.enum(['image_view', 'variant_select', 'share']).optional(),
+  metadata: z.record(z.any()).optional(),
+  session_id: z.string().uuid().optional(),
+});
+
+// Batch request body
+const analyticsBatchSchema = z.object({
+  events: z.array(analyticsBatchEventSchema).min(1).max(100),
+  session_id: z.string().uuid().optional(),
+  device_id: z.string().min(1).max(200).optional(),
+});
+
 /**
  * Webhook schemas
  */
@@ -96,24 +152,73 @@ const webhookErpnextSchema = z
  * These combine params, query, and body validation
  */
 
-// Analytics view endpoint: only path param
+// Analytics view endpoint: only path param (works for both GET and POST)
 const analyticsViewRequestSchema = z.object({
   params: analyticsProductNameSchema,
   body: z.object({}).passthrough(), // Empty body allowed
   query: z.object({}).passthrough(), // Empty query allowed
 });
 
-// Analytics rating endpoint: path param + body
+// Analytics rating endpoint: path param + body (for POST)
 const analyticsRatingRequestSchema = z.object({
   params: analyticsProductNameSchema,
   body: analyticsRatingSchema,
   query: z.object({}).passthrough(),
 });
 
-// Analytics comment endpoint: path param + body
+// Analytics rating endpoint: only path param (for GET)
+const analyticsRatingGetRequestSchema = z.object({
+  params: analyticsProductNameSchema,
+  body: z.object({}).passthrough(), // Empty body for GET
+  query: z.object({}).passthrough(),
+});
+
+// Analytics comment endpoint: path param + body (for POST)
 const analyticsCommentRequestSchema = z.object({
   params: analyticsProductNameSchema,
   body: analyticsCommentSchema,
+  query: z.object({}).passthrough(),
+});
+
+// Analytics comment endpoint: only path param (for GET)
+const analyticsCommentGetRequestSchema = z.object({
+  params: analyticsProductNameSchema,
+  body: z.object({}).passthrough(), // Empty body for GET
+  query: z.object({}).passthrough(),
+});
+
+// Analytics search endpoint: only body
+const analyticsSearchRequestSchema = z.object({
+  params: z.object({}).passthrough(),
+  body: analyticsSearchSchema,
+  query: z.object({}).passthrough(),
+});
+
+// Analytics wishlist endpoint: only body
+const analyticsWishlistRequestSchema = z.object({
+  params: z.object({}).passthrough(),
+  body: analyticsWishlistSchema,
+  query: z.object({}).passthrough(),
+});
+
+// Analytics session endpoint: only body
+const analyticsSessionRequestSchema = z.object({
+  params: z.object({}).passthrough(),
+  body: analyticsSessionSchema,
+  query: z.object({}).passthrough(),
+});
+
+// Analytics interaction endpoint: only body
+const analyticsInteractionRequestSchema = z.object({
+  params: z.object({}).passthrough(),
+  body: analyticsInteractionSchema,
+  query: z.object({}).passthrough(),
+});
+
+// Analytics batch endpoint: only body
+const analyticsBatchRequestSchema = z.object({
+  params: z.object({}).passthrough(),
+  body: analyticsBatchSchema,
   query: z.object({}).passthrough(),
 });
 
@@ -281,6 +386,12 @@ module.exports = {
   analyticsProductNameSchema,
   analyticsRatingSchema,
   analyticsCommentSchema,
+  analyticsSearchSchema,
+  analyticsWishlistSchema,
+  analyticsSessionSchema,
+  analyticsInteractionSchema,
+  analyticsBatchEventSchema,
+  analyticsBatchSchema,
 
   // Webhook schemas
   webhookPriceUpdateSchema,
@@ -300,7 +411,14 @@ module.exports = {
   // Combined request schemas for middleware
   analyticsViewRequestSchema,
   analyticsRatingRequestSchema,
+  analyticsRatingGetRequestSchema,
   analyticsCommentRequestSchema,
+  analyticsCommentGetRequestSchema,
+  analyticsSearchRequestSchema,
+  analyticsWishlistRequestSchema,
+  analyticsSessionRequestSchema,
+  analyticsInteractionRequestSchema,
+  analyticsBatchRequestSchema,
   webhookPriceUpdateRequestSchema,
   webhookErpnextRequestSchema,
   signupRequestSchema,
