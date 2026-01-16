@@ -55,23 +55,68 @@ async function refreshAllProducts() {
         // Compute hash
         const newHash = computeDataHash(transformedData);
 
-        // Get existing cache
+        // Get existing cache (both hash cache and simple key for comparison)
         const existing = await getCacheHash('product', erpnextName);
+        const { getCache } = require('../redis/cache');
+        const cachedProduct = await getCache('product', erpnextName);
 
         // Check if changed
         let version = '1';
         let changed = false;
 
         if (existing) {
+          // Compare hash first (fast check)
           if (existing.data_hash === newHash) {
-            // No change
-            summary.unchanged++;
-            continue;
+            // Hash matches, but also check if actual Redis value differs (manual changes)
+            // Compare objects using JSON stringify (deep equality check)
+            const dataMatches = 
+              cachedProduct &&
+              JSON.stringify(cachedProduct) === JSON.stringify(transformedData);
+
+            if (dataMatches) {
+              // Both hash and actual data match - no change
+              summary.unchanged++;
+              continue;
+            } else {
+              // Hash matches but actual data differs - manual change detected
+              logger.info('Manual Redis change detected for product', {
+                erpnextName,
+                cachedHash: existing.data_hash,
+                newHash,
+              });
+              // Continue to update (changed = true)
+            }
           }
-          // Changed, increment version
+          
+          // Hash differs or manual change detected - increment version
           version = await incrementCacheHashVersion('product', erpnextName);
           if (!version) {
             version = (parseInt(existing.version) + 1).toString();
+          }
+        } else {
+          // No existing hash cache - check simple Redis key
+          if (cachedProduct) {
+            // Compare objects using JSON stringify
+            const dataMatches = JSON.stringify(cachedProduct) === JSON.stringify(transformedData);
+            
+            if (dataMatches) {
+              // Data matches existing simple key - no change, just update hash cache without stream entry
+              logger.info('Product refresh: no change detected (matched simple Redis key)', {
+                erpnextName,
+                hash: newHash,
+              });
+              
+              // Update hash cache to keep it in sync, but don't add stream entry
+              const updatedAt = Date.now().toString();
+              await setCacheHash('product', erpnextName, transformedData, {
+                data_hash: newHash,
+                updated_at: updatedAt,
+                version: '1',
+              });
+              
+              summary.unchanged++;
+              continue;
+            }
           }
         }
 
@@ -265,9 +310,41 @@ async function refreshAllPrices() {
               if (!version) {
                 version = (parseInt(existing.version) + 1).toString();
               }
+              changed = true;
+            } else {
+              // No existing hash cache - check simple Redis key
+              if (cachedPriceArray && Array.isArray(cachedPriceArray)) {
+                // Compare arrays element by element
+                const arraysMatch = 
+                  cachedPriceArray.length === priceArray.length &&
+                  cachedPriceArray.every((val, idx) => val === priceArray[idx]);
+
+                if (arraysMatch) {
+                  // Data matches existing simple key - no change, just update hash cache without stream entry
+                  logger.info('Price refresh: no change detected (matched simple Redis key)', {
+                    itemCode,
+                    hash: newHash,
+                  });
+                  
+                  // Update hash cache to keep it in sync, but don't add stream entry
+                  const updatedAt = Date.now().toString();
+                  await setCacheHash('price', itemCode, priceData, {
+                    data_hash: newHash,
+                    updated_at: updatedAt,
+                    version: '1',
+                  });
+                  
+                  return { itemCode, changed: false };
+                }
+              }
+              // Data differs or no existing data - this is a change
+              changed = true;
             }
 
-            changed = true;
+            // Only proceed if there's a change
+            if (!changed) {
+              return { itemCode, changed: false };
+            }
 
             // Update cache
             const updatedAt = Date.now().toString();
@@ -281,7 +358,7 @@ async function refreshAllPrices() {
             const { setItemPrice } = require('../redis/cache');
             await setItemPrice(itemCode, priceArray);
 
-            // Add stream entry only if changed (important: app needs to know about any change)
+            // Add stream entry only if changed
             const streamId = await addStreamEntry('price', itemCode, newHash, version);
             logger.info('Price stream entry added in refresh', {
               itemCode,
@@ -470,9 +547,45 @@ async function refreshAllStock() {
               if (!version) {
                 version = (parseInt(existing.version) + 1).toString();
               }
+              changed = true;
+            } else {
+              // No existing hash cache - check simple Redis key
+              if (cachedAvailability && Array.isArray(cachedAvailability)) {
+                // Compare arrays element by element
+                const arraysMatch = 
+                  cachedAvailability.length === availabilityArray.length &&
+                  cachedAvailability.every((val, idx) => val === availabilityArray[idx]);
+
+                if (arraysMatch) {
+                  // Data matches existing simple key - no change, just update hash cache without stream entry
+                  logger.info('Stock refresh: no change detected (matched simple Redis key)', {
+                    itemCode,
+                    hash: newHash,
+                  });
+                  
+                  // Update hash cache to keep it in sync, but don't add stream entry
+                  const updatedAt = Date.now().toString();
+                  await setCacheHash('stock', itemCode, stockData, {
+                    data_hash: newHash,
+                    updated_at: updatedAt,
+                    version: '1',
+                  });
+                  
+                  // Also update simple key
+                  const { setStockAvailability } = require('../redis/cache');
+                  await setStockAvailability(itemCode, availabilityArray);
+                  
+                  return { itemCode, changed: false };
+                }
+              }
+              // Data differs or no existing data - this is a change
+              changed = true;
             }
 
-            changed = true;
+            // Only proceed if there's a change
+            if (!changed) {
+              return { itemCode, changed: false };
+            }
 
             // Update cache
             const updatedAt = Date.now().toString();
@@ -563,13 +676,46 @@ async function refreshAllHero() {
     // Compute hash
     const newHash = computeDataHash(transformedData);
 
-    // Get existing cache
+    // Get existing cache (both hash cache and actual data for comparison)
     const existing = await getCacheHash('hero', entityId);
+    const { getCacheHashData } = require('../redis/cache');
+    const cachedHeroData = await getCacheHashData('hero', entityId);
 
     // Check if changed
-    if (existing && existing.data_hash === newHash) {
+    let changed = false;
+    if (existing) {
+      // Compare hash first (fast check)
+      if (existing.data_hash === newHash) {
+        // Hash matches, but also check if actual data differs (manual changes)
+        // Compare objects using JSON stringify (deep equality check)
+        const dataMatches = 
+          cachedHeroData &&
+          JSON.stringify(cachedHeroData) === JSON.stringify(transformedData);
+
+        if (dataMatches) {
+          // Both hash and actual data match - no change
+          summary.unchanged = 1;
+          logger.info('Hero refresh: no change detected');
+          return summary;
+        } else {
+          // Hash matches but actual data differs - manual change detected
+          logger.info('Manual Redis change detected for hero', {
+            cachedHash: existing.data_hash,
+            newHash,
+          });
+          changed = true;
+        }
+      } else {
+        // Hash differs
+        changed = true;
+      }
+    } else {
+      // No existing cache - this is a change
+      changed = true;
+    }
+
+    if (!changed) {
       summary.unchanged = 1;
-      logger.info('Hero refresh: no change detected');
       return summary;
     }
 
@@ -644,13 +790,46 @@ async function refreshAllBundle() {
     // Compute hash
     const newHash = computeDataHash(transformedData);
 
-    // Get existing cache
+    // Get existing cache (both hash cache and actual data for comparison)
     const existing = await getCacheHash('bundle', entityId);
+    const { getCacheHashData } = require('../redis/cache');
+    const cachedBundleData = await getCacheHashData('bundle', entityId);
 
     // Check if changed
-    if (existing && existing.data_hash === newHash) {
+    let changed = false;
+    if (existing) {
+      // Compare hash first (fast check)
+      if (existing.data_hash === newHash) {
+        // Hash matches, but also check if actual data differs (manual changes)
+        // Compare objects using JSON stringify (deep equality check)
+        const dataMatches = 
+          cachedBundleData &&
+          JSON.stringify(cachedBundleData) === JSON.stringify(transformedData);
+
+        if (dataMatches) {
+          // Both hash and actual data match - no change
+          summary.unchanged = 1;
+          logger.info('Bundle refresh: no change detected');
+          return summary;
+        } else {
+          // Hash matches but actual data differs - manual change detected
+          logger.info('Manual Redis change detected for bundle', {
+            cachedHash: existing.data_hash,
+            newHash,
+          });
+          changed = true;
+        }
+      } else {
+        // Hash differs
+        changed = true;
+      }
+    } else {
+      // No existing cache - this is a change
+      changed = true;
+    }
+
+    if (!changed) {
       summary.unchanged = 1;
-      logger.info('Bundle refresh: no change detected');
       return summary;
     }
 
@@ -727,13 +906,46 @@ async function refreshAllHome() {
     // Compute hash
     const newHash = computeDataHash(transformedData);
 
-    // Get existing cache
+    // Get existing cache (both hash cache and actual data for comparison)
     const existing = await getCacheHash('home', entityId);
+    const { getCacheHashData } = require('../redis/cache');
+    const cachedHomeData = await getCacheHashData('home', entityId);
 
     // Check if changed
-    if (existing && existing.data_hash === newHash) {
+    let changed = false;
+    if (existing) {
+      // Compare hash first (fast check)
+      if (existing.data_hash === newHash) {
+        // Hash matches, but also check if actual data differs (manual changes)
+        // Compare objects using JSON stringify (deep equality check)
+        const dataMatches = 
+          cachedHomeData &&
+          JSON.stringify(cachedHomeData) === JSON.stringify(transformedData);
+
+        if (dataMatches) {
+          // Both hash and actual data match - no change
+          summary.unchanged = 1;
+          logger.info('Home refresh: no change detected');
+          return summary;
+        } else {
+          // Hash matches but actual data differs - manual change detected
+          logger.info('Manual Redis change detected for home', {
+            cachedHash: existing.data_hash,
+            newHash,
+          });
+          changed = true;
+        }
+      } else {
+        // Hash differs
+        changed = true;
+      }
+    } else {
+      // No existing cache - this is a change
+      changed = true;
+    }
+
+    if (!changed) {
       summary.unchanged = 1;
-      logger.info('Home refresh: no change detected');
       return summary;
     }
 

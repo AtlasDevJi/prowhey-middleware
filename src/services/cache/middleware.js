@@ -293,27 +293,64 @@ async function handleProductQueryRequest(req, res, queryString) {
         let version = '1';
         let changed = false;
         
-        // Check if hash already exists to preserve version
+        // Check if hash already exists to preserve version (both hash cache and simple cache for comparison)
         const existing = await getCacheHash('product', product.erpnext_name);
+        const { getCache } = require('../redis/cache');
+        const cachedProduct = await getCache('product', product.erpnext_name);
+        
         if (existing) {
-          // If hash matches, keep existing version (no change)
+          // Compare hash first (fast check)
           if (existing.data_hash === productHash) {
-            // No change, but still cache to ensure it's up to date
-            await setCacheHash('product', product.erpnext_name, product, {
-              data_hash: productHash,
-              updated_at: updatedAt,
-              version: existing.version,
-            });
-            await setCache('product', product.erpnext_name, product);
-            continue; // Skip stream update, no change
+            // Hash matches, but also check if actual Redis value differs (manual changes)
+            // Compare objects using JSON stringify (deep equality check)
+            const dataMatches = 
+              cachedProduct &&
+              JSON.stringify(cachedProduct) === JSON.stringify(product);
+
+            if (dataMatches) {
+              // Both hash and actual data match - no change
+              // Still cache to ensure it's up to date, but skip stream update
+              await setCacheHash('product', product.erpnext_name, product, {
+                data_hash: productHash,
+                updated_at: updatedAt,
+                version: existing.version,
+              });
+              await setCache('product', product.erpnext_name, product);
+              continue; // Skip stream update, no change
+            } else {
+              // Hash matches but actual data differs - manual change detected
+              logger.info('Manual Redis change detected for product in middleware', {
+                erpnextName: product.erpnext_name,
+                cachedHash: existing.data_hash,
+                newHash: productHash,
+              });
+              // Continue to update (changed = true)
+            }
           }
-          // Hash differs - data changed, increment version and add stream entry
+          
+          // Hash differs or manual change detected - increment version and add stream entry
           changed = true;
           const newVersion = await incrementCacheHashVersion('product', product.erpnext_name);
           version = newVersion || (parseInt(existing.version) + 1).toString();
           updatedCount++;
         } else {
-          // New product - add stream entry
+          // No existing hash cache - check simple Redis key
+          if (cachedProduct) {
+            // Compare objects using JSON stringify
+            const dataMatches = JSON.stringify(cachedProduct) === JSON.stringify(product);
+            
+            if (dataMatches) {
+              // Data matches existing simple key - no change, just update hash cache without stream entry
+              await setCacheHash('product', product.erpnext_name, product, {
+                data_hash: productHash,
+                updated_at: updatedAt,
+                version: '1',
+              });
+              await setCache('product', product.erpnext_name, product);
+              continue; // Skip stream update, no change
+            }
+          }
+          // Data differs or no existing data - this is a change
           changed = true;
           newCount++;
         }

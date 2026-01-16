@@ -12,18 +12,91 @@ function getStreamName(entityType) {
 }
 
 /**
- * Add entry to Redis Stream
+ * Remove existing stream entries for a specific entity
+ * Scans recent entries and removes any with matching entity_id
+ * This ensures only the latest update is in the stream
+ * @param {string} entityType - Entity type
+ * @param {string} entityId - Entity ID to remove entries for
+ * @param {number} scanLimit - Maximum number of entries to scan (default: 1000)
+ * @returns {Promise<number>} Number of entries removed
+ */
+async function removeExistingStreamEntries(entityType, entityId, scanLimit = 1000) {
+  try {
+    const redis = getRedisClient();
+    const streamName = getStreamName(entityType);
+
+    // Read recent entries from the stream (most recent first)
+    const results = await redis.xrevrange(streamName, '+', '-', 'COUNT', scanLimit);
+
+    if (!results || results.length === 0) {
+      return 0;
+    }
+
+    // Find entry IDs that match the entity_id
+    const entryIdsToDelete = [];
+    for (const [id, fields] of results) {
+      // Convert fields array [key1, val1, key2, val2, ...] to object
+      const entryFields = {};
+      for (let i = 0; i < fields.length; i += 2) {
+        entryFields[fields[i]] = fields[i + 1];
+      }
+
+      // Check if entity_id matches
+      if (entryFields.entity_id === entityId) {
+        entryIdsToDelete.push(id);
+      }
+    }
+
+    if (entryIdsToDelete.length === 0) {
+      return 0;
+    }
+
+    // Delete all matching entries
+    if (entryIdsToDelete.length > 0) {
+      await redis.xdel(streamName, ...entryIdsToDelete);
+    }
+
+    logger.info('Removed existing stream entries', {
+      streamName,
+      entityType,
+      entityId,
+      removedCount: entryIdsToDelete.length,
+      entryIds: entryIdsToDelete,
+    });
+
+    return entryIdsToDelete.length;
+  } catch (error) {
+    logger.error('Remove existing stream entries error', {
+      entityType,
+      entityId,
+      error: error.message,
+    });
+    return 0;
+  }
+}
+
+/**
+ * Add or replace entry in Redis Stream
+ * Removes any existing entries for the same entity, then adds the new entry
+ * This ensures only the latest update per entity is in the stream
  * @param {string} entityType - Entity type
  * @param {string} entityId - Entity ID
  * @param {string} dataHash - SHA-256 hash of data field
  * @param {string} version - Entity version number
  * @param {string} idempotencyKey - Optional idempotency key (generated if not provided)
+ * @param {boolean} replaceExisting - If true, remove existing entries for this entity before adding (default: true)
  * @returns {Promise<string|null>} Stream ID (timestamp-sequence) or null if failed
  */
-async function addStreamEntry(entityType, entityId, dataHash, version, idempotencyKey = null) {
+async function addStreamEntry(entityType, entityId, dataHash, version, idempotencyKey = null, replaceExisting = true) {
   try {
     const redis = getRedisClient();
     const streamName = getStreamName(entityType);
+
+    // Remove existing entries for this entity if replaceExisting is true
+    let removedCount = 0;
+    if (replaceExisting) {
+      removedCount = await removeExistingStreamEntries(entityType, entityId);
+    }
 
     // Generate idempotency key if not provided
     const idempotency = idempotencyKey || uuidv4();
@@ -53,6 +126,8 @@ async function addStreamEntry(entityType, entityId, dataHash, version, idempoten
       dataHash,
       version,
       idempotencyKey: idempotency,
+      replacedExisting: replaceExisting,
+      removedCount,
     });
 
     return streamId;
@@ -87,7 +162,7 @@ async function readStreamEntries(entityType, lastId = '0-0', limit = 100) {
 
     // Parse results
     const entries = [];
-    for (const [stream, streamEntries] of results) {
+    for (const [, streamEntries] of results) {
       for (const [id, fields] of streamEntries) {
         // Convert fields array [key1, val1, key2, val2, ...] to object
         const entryFields = {};
@@ -296,6 +371,7 @@ async function getStreamInfo(entityType) {
 module.exports = {
   getStreamName,
   addStreamEntry,
+  removeExistingStreamEntries,
   readStreamEntries,
   readMultipleStreams,
   trimStream,

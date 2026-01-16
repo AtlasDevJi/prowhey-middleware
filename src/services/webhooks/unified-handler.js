@@ -30,30 +30,98 @@ async function processStockWebhook(itemCode) {
     // Compute hash
     const newHash = computeDataHash(stockData);
 
-    // Get existing cache
+    // Get existing cache (both hash cache and simple key for comparison)
     const existing = await getCacheHash('stock', itemCode);
+    const { getStockAvailability } = require('../redis/cache');
+    const cachedAvailability = await getStockAvailability(itemCode);
 
     // Check if changed
     let version = '1';
-    let changed = true;
+    let changed = false;
 
     if (existing) {
+      // Compare hash first (fast check)
       if (existing.data_hash === newHash) {
-        changed = false;
-        logger.info('Stock webhook: no change detected', {
-          itemCode,
-          hash: newHash,
-        });
-        return {
-          changed: false,
-          version: existing.version,
-          streamId: null,
-        };
+        // Hash matches, but also check if actual Redis value differs (manual changes)
+        // Compare arrays element by element
+        const arraysMatch = 
+          cachedAvailability &&
+          Array.isArray(cachedAvailability) &&
+          cachedAvailability.length === availabilityArray.length &&
+          cachedAvailability.every((val, idx) => val === availabilityArray[idx]);
+
+        if (arraysMatch) {
+          // Both hash and actual data match - no change
+          changed = false;
+          logger.info('Stock webhook: no change detected', {
+            itemCode,
+            hash: newHash,
+          });
+          return {
+            changed: false,
+            version: existing.version,
+            streamId: null,
+          };
+        } else {
+          // Hash matches but actual data differs - manual change detected
+          logger.info('Manual Redis change detected for stock', {
+            itemCode,
+            cachedHash: existing.data_hash,
+            newHash,
+            cachedAvailability,
+            newAvailability: availabilityArray,
+          });
+          // Continue to update (changed = true)
+        }
       }
+      
+      // Hash differs or manual change detected - increment version
       version = await incrementCacheHashVersion('stock', itemCode);
       if (!version) {
         version = (parseInt(existing.version) + 1).toString();
       }
+      changed = true;
+    } else {
+      // No existing hash cache - check simple Redis key
+      if (cachedAvailability && Array.isArray(cachedAvailability)) {
+        // Compare arrays element by element
+        const arraysMatch = 
+          cachedAvailability.length === availabilityArray.length &&
+          cachedAvailability.every((val, idx) => val === availabilityArray[idx]);
+
+        if (arraysMatch) {
+          // Data matches existing simple key - no change, just update hash cache without stream entry
+          logger.info('Stock webhook: no change detected (matched simple Redis key)', {
+            itemCode,
+            hash: newHash,
+          });
+          
+          // Update hash cache to keep it in sync, but don't add stream entry
+          const updatedAt = Date.now().toString();
+          await setCacheHash('stock', itemCode, stockData, {
+            data_hash: newHash,
+            updated_at: updatedAt,
+            version: '1',
+          });
+          
+          return {
+            changed: false,
+            version: '1',
+            streamId: null,
+          };
+        }
+      }
+      // Data differs or no existing data - this is a change
+      changed = true;
+    }
+
+    // Only proceed if there's a change
+    if (!changed) {
+      return {
+        changed: false,
+        version: existing?.version || '1',
+        streamId: null,
+      };
     }
 
     // Update cache
@@ -72,7 +140,7 @@ async function processStockWebhook(itemCode) {
     const { setStockAvailability } = require('../redis/cache');
     await setStockAvailability(itemCode, availabilityArray);
 
-    // Add stream entry
+    // Add stream entry only if changed
     const streamId = await addStreamEntry('stock', itemCode, newHash, version);
 
     logger.info('Stock webhook processed', {
@@ -132,29 +200,63 @@ async function processBundleWebhook() {
     // Compute hash
     const newHash = computeDataHash(transformedData);
 
-    // Get existing cache
+    // Get existing cache (both hash cache and actual data for comparison)
     const existing = await getCacheHash('bundle', entityId);
+    const { getCacheHashData } = require('../redis/cache');
+    const cachedBundleData = await getCacheHashData('bundle', entityId);
 
     // Check if changed
     let version = '1';
-    let changed = true;
+    let changed = false;
 
     if (existing) {
+      // Compare hash first (fast check)
       if (existing.data_hash === newHash) {
-        changed = false;
-        logger.info('Bundle webhook: no change detected', {
-          hash: newHash,
-        });
-        return {
-          changed: false,
-          version: existing.version,
-          streamId: null,
-        };
+        // Hash matches, but also check if actual data differs (manual changes)
+        // Compare objects using JSON stringify (deep equality check)
+        const dataMatches = 
+          cachedBundleData &&
+          JSON.stringify(cachedBundleData) === JSON.stringify(transformedData);
+
+        if (dataMatches) {
+          // Both hash and actual data match - no change
+          changed = false;
+          logger.info('Bundle webhook: no change detected', {
+            hash: newHash,
+          });
+          return {
+            changed: false,
+            version: existing.version,
+            streamId: null,
+          };
+        } else {
+          // Hash matches but actual data differs - manual change detected
+          logger.info('Manual Redis change detected for bundle', {
+            cachedHash: existing.data_hash,
+            newHash,
+          });
+          // Continue to update (changed = true)
+        }
       }
+      
+      // Hash differs or manual change detected - increment version
       version = await incrementCacheHashVersion('bundle', entityId);
       if (!version) {
         version = (parseInt(existing.version) + 1).toString();
       }
+      changed = true;
+    } else {
+      // No existing cache - this is a change
+      changed = true;
+    }
+
+    // Only proceed if there's a change
+    if (!changed) {
+      return {
+        changed: false,
+        version: existing?.version || '1',
+        streamId: null,
+      };
     }
 
     // Update cache
