@@ -9,6 +9,7 @@ const CACHE_TTL = {
   home: 'friday', // Friday-only entity - calculate dynamically
   stock: 604800, // 7 days (1 week) - backup safety net
   bundle: 'friday', // Friday-only entity - calculate dynamically
+  message: 0, // Messages persist indefinitely (no TTL)
   default: 300, // 5 minutes (for query caches and other temporary data)
 };
 
@@ -30,9 +31,10 @@ function getEntityTTL(entityType) {
  * Get entity TTL with date-based calculation for Friday-only entities
  * For Friday-only entities (product, price, hero, home, bundle): calculates seconds until next Friday 11 PM
  * For stock: returns 7 days (604800 seconds)
+ * For message: returns 0 (persistent, no expiration)
  * For others: uses default TTL
  * @param {string} entityType - Entity type
- * @returns {number} TTL in seconds
+ * @returns {number} TTL in seconds (0 means persistent, no expiration)
  */
 function getEntityTTLWithDate(entityType) {
   const ttlConfig = CACHE_TTL[entityType];
@@ -43,7 +45,7 @@ function getEntityTTLWithDate(entityType) {
   }
   
   if (ttlConfig !== undefined && typeof ttlConfig === 'number') {
-    // Fixed TTL value (e.g., stock = 604800)
+    // Fixed TTL value (e.g., stock = 604800, message = 0 for persistent)
     return ttlConfig;
   }
   

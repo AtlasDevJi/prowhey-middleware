@@ -3,11 +3,35 @@ const { logger } = require('../logger');
 const crypto = require('crypto');
 
 /**
- * Generate unique user ID
- * @returns {string} User ID in format usr_<hex>
+ * Generate unique incremental user ID
+ * Format: 4-character base 36 alphanumeric (0001, 0002, ..., 000A, 000B, ..., ZZZZ)
+ * Uses Redis counter for thread-safe incremental generation
+ * Base 36 uses: 0-9, A-Z (36 characters)
+ * Total capacity: 36^4 = 1,679,616 unique IDs
+ * @returns {Promise<string>} User ID (4 characters: base 36)
  */
-function generateUserId() {
-  return `usr_${crypto.randomBytes(12).toString('hex')}`;
+async function generateUserId() {
+  try {
+    const redis = getRedisClient();
+    
+    // Get next counter value (atomic operation)
+    // Redis INCR starts at 0, so first call returns 1, second returns 2, etc.
+    const counter = await redis.incr('user:id:counter');
+    
+    // Convert counter to base 36 (0-9, A-Z) and pad to 4 characters
+    // First user: counter=1 → "1" → "0001"
+    // Second user: counter=2 → "2" → "0002"
+    // 36th user: counter=36 → "10" → "0010"
+    // 1296th user: counter=1296 → "100" → "0100"
+    const base36Value = counter.toString(36).toUpperCase();
+    const userId = base36Value.padStart(4, '0');
+    
+    logger.info('Generated user ID', { userId, counter });
+    return userId;
+  } catch (error) {
+    logger.error('User ID generation failed', { error: error.message });
+    throw error;
+  }
 }
 
 /**
@@ -64,7 +88,7 @@ function computeUserStatus(user) {
 async function createUser(userData) {
   try {
     const redis = getRedisClient();
-    const userId = generateUserId();
+    const userId = await generateUserId();
     const now = new Date().toISOString();
     
     // Determine if user is registered (has email/username and password or googleId)
@@ -204,7 +228,7 @@ async function getUserById(userId) {
     if (user.deleted) {
       return null;
     }
-    // Ensure userStatus is set (for backward compatibility with existing users)
+    // Ensure userStatus is set
     if (!user.userStatus) {
       user.userStatus = computeUserStatus(user);
     }
@@ -349,7 +373,7 @@ async function updateUser(userId, updates) {
         updated.userStatus = newStatus;
         logger.info('User status auto-transitioned', { userId, from: currentStatus, to: newStatus });
       } else {
-        // Ensure userStatus is set (for backward compatibility)
+        // Ensure userStatus is set
         updated.userStatus = currentStatus;
       }
     } else {

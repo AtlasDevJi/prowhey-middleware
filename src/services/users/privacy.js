@@ -71,7 +71,7 @@ async function anonymizeUserData(userId) {
     // Anonymize PII while keeping analytics data
     await updateUser(userId, {
       email: null,
-      username: `anonymous_${userId.substring(0, 8)}`,
+      username: `anonymous_${userId}`,
       phone: null,
       whatsappNumber: null,
       telegramUsername: null,

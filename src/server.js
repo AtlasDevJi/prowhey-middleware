@@ -98,6 +98,7 @@ const webhookRateLimiter = createRateLimiter(getRateLimitConfig('webhooks'), 'we
 
 // Health check routes
 const healthRoutes = require('./routes/health');
+const messagingRoutes = require('./routes/messaging');
 app.use('/health', healthRateLimiter, healthRoutes);
 
 // Cache middleware - apply before other routes
@@ -139,6 +140,9 @@ app.use('/api/users', resourceRateLimiter, usersRoutes);
 // Sync routes
 const syncRoutes = require('./routes/sync');
 app.use('/api/sync', resourceRateLimiter, syncRoutes);
+
+// Messaging routes
+app.use('/api/messaging', resourceRateLimiter, messagingRoutes);
 
 // ERPNext routes (ping endpoint for local testing)
 const erpnextRoutes = require('./routes/erpnext');

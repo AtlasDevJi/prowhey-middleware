@@ -22,20 +22,20 @@ This document provides comprehensive Redis commands and Node.js code examples fo
 
 ## Overview
 
-All analytics data is stored in Redis with consistent key patterns. User IDs are unified - both registered users (`usr_xxx`) and anonymous users use the same format, with anonymous users tracked via `deviceId` or `sessionId` when no userId is available.
+All analytics data is stored in Redis with consistent key patterns. User IDs are unified - both registered users (4-character base 36 IDs) and anonymous users use the same format, with anonymous users tracked via `deviceId` or `sessionId` when no userId is available.
 
 ### User ID Unification
 
 **Yes, userId is unified across all analytics tracking:**
 
-- **Registered Users**: Use `userId` from user account (e.g., `usr_abc123...`)
+- **Registered Users**: Use `userId` from user account (4-character base 36: `0001`, `0002`, `000A`, `0010`, etc.)
 - **Anonymous Users**: Tracked as `'anonymous'` string in analytics keys, or via `deviceId`/`sessionId` in event metadata
 - **All Analytics Functions**: Accept `userId` parameter and handle both authenticated and anonymous users
-- **Consistent Format**: All user tracking uses the same `userId` format (`usr_xxx` for registered, `'anonymous'` for anonymous)
+- **Consistent Format**: All user tracking uses the same `userId` format (4-character base 36 for registered, `'anonymous'` for anonymous)
 - **Event Metadata**: Events store both `userId` (if available) and `deviceId`/`sessionId` for anonymous tracking
 
 **Key Pattern:**
-- When `userId` is provided: Uses actual userId (e.g., `views:user:usr_abc123:WEB-ITM-0002`)
+- When `userId` is provided: Uses actual userId (e.g., `views:user:0001:WEB-ITM-0002`)
 - When `userId` is null: Uses `'anonymous'` string (e.g., `session:active:anonymous:session-123`)
 - Event logs always include `userId`, `deviceId`, and `sessionId` fields for complete tracking
 
@@ -150,7 +150,7 @@ console.log('Top 20 viewed products:', topProducts);
 
 **Redis Command:**
 ```bash
-GET views:user:usr_abc123:WEB-ITM-0002
+GET views:user:0001:WEB-ITM-0002
 ```
 
 **Node.js:**
@@ -173,7 +173,7 @@ async function getUserProductViews(userId, productName) {
 }
 
 // Usage
-const userViews = await getUserProductViews('usr_abc123', 'WEB-ITM-0002');
+const userViews = await getUserProductViews('0001', 'WEB-ITM-0002');
 console.log(`User viewed this product ${userViews.length} times`);
 console.log('View history:', userViews);
 ```
@@ -183,7 +183,7 @@ console.log('View history:', userViews);
 **Redis Commands:**
 ```bash
 # Get all products viewed by a user
-KEYS views:user:usr_abc123:*
+KEYS views:user:0001:*
 ```
 
 **Node.js:**
@@ -227,7 +227,7 @@ async function getUserViewedProducts(userId) {
 }
 
 // Usage
-const userProducts = await getUserViewedProducts('usr_abc123');
+const userProducts = await getUserViewedProducts('0001');
 console.log(`User viewed ${userProducts.length} different products`);
 ```
 
@@ -309,7 +309,7 @@ async function getLastViewTimestamp(userId, viewKeys) {
 }
 
 // Usage
-const summary = await getUserActivitySummary('usr_abc123');
+const summary = await getUserActivitySummary('0001');
 console.log('User Activity Summary:', summary);
 ```
 
@@ -508,7 +508,7 @@ console.log(`Found ${weekEvents.length} search events this week`);
 
 **Redis Command:**
 ```bash
-GET search:user:usr_abc123
+GET search:user:0001
 ```
 
 **Node.js:**
@@ -531,7 +531,7 @@ async function getUserSearchHistory(userId) {
 }
 
 // Usage
-const history = await getUserSearchHistory('usr_abc123');
+const history = await getUserSearchHistory('0001');
 console.log(`User has ${history.length} searches`);
 console.log('Recent searches:', history.slice(0, 10));
 ```
@@ -609,7 +609,7 @@ console.log('Search Performance Analysis:', performance);
 KEYS session:active:*
 
 # Get specific active session
-GET session:active:usr_abc123:session-123
+GET session:active:0001:session-123
 ```
 
 **Node.js:**
@@ -652,7 +652,7 @@ console.log(`Currently ${activeSessions.length} active sessions`);
 **Redis Commands:**
 ```bash
 # Get daily session summary
-GET session:user:usr_abc123:2025-01-15
+GET session:user:0001:2025-01-15
 
 # Get detailed session log
 GET events:session:2025-01-15:session-123
@@ -694,10 +694,10 @@ async function getUserSessionsForDateRange(userId, startDate, endDate) {
 }
 
 // Usage
-const todaySession = await getUserSessionHistory('usr_abc123', '2025-01-15');
+const todaySession = await getUserSessionHistory('0001', '2025-01-15');
 console.log('Today\'s session:', todaySession);
 
-const weekSessions = await getUserSessionsForDateRange('usr_abc123', '2025-01-08', '2025-01-15');
+const weekSessions = await getUserSessionsForDateRange('0001', '2025-01-08', '2025-01-15');
 console.log(`User had ${weekSessions.length} sessions this week`);
 ```
 
@@ -974,7 +974,7 @@ console.log('Interaction trends:', trends);
 
 **Redis Command:**
 ```bash
-GET wishlist:user:usr_abc123
+GET wishlist:user:0001
 ```
 
 **Node.js:**
@@ -997,7 +997,7 @@ async function getUserWishlist(userId) {
 }
 
 // Usage
-const wishlist = await getUserWishlist('usr_abc123');
+const wishlist = await getUserWishlist('0001');
 console.log(`User has ${wishlist.length} items in wishlist`);
 ```
 
@@ -1398,7 +1398,7 @@ async function getUserJourney(userId, date) {
 }
 
 // Usage
-const journey = await getUserJourney('usr_abc123', '2025-01-15');
+const journey = await getUserJourney('0001', '2025-01-15');
 console.log('User journey:', journey);
 ```
 
@@ -1561,7 +1561,7 @@ module.exports = new AnalyticsExtractor();
 
 ## Notes
 
-1. **User ID Unification**: All analytics use unified userId format (`usr_xxx` for registered, `'anonymous'` for anonymous users)
+1. **User ID Unification**: All analytics use unified userId format (4-character base 36 for registered, `'anonymous'` for anonymous users)
 2. **TTL**: Event logs have 30-day TTL, aggregates are permanent
 3. **Performance**: Use SCAN instead of KEYS for production, use pipelines for batch operations
 4. **Data Structure**: Most data is stored as JSON strings, parse before use

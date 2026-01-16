@@ -26,7 +26,7 @@ All API responses follow a standard format:
 
 ```typescript
 {
-  id: string,                      // Unique user ID (usr_...)
+  id: string,                      // Unique user ID (4-character base 36: 0001, 0002, ..., 000A, 000B, ..., ZZZZ)
   email?: string,                  // Email address
   username?: string,               // Username
   phone?: string,                  // Phone number (E.164 format)
@@ -554,6 +554,51 @@ All API responses follow a standard format:
 | **Update Object** | `object` | Entity update with data and metadata |
 | **Health Status** | `object` | System and component health |
 | **Auth Tokens** | `object` | JWT access and refresh tokens |
+| **Message** | `object` | Two-way message between user and company |
+| **Action Button** | `object` | Action button for company messages (deep links) |
+
+---
+
+## Messaging
+
+### Message Object
+**Type:** `object`  
+**Description:** Two-way message between user and company
+
+```typescript
+{
+  messageId: string,           // Unique message ID (msg_...)
+  userId: string,              // User ID (REQUIRED - identifies sender for user messages, recipient for company messages)
+  sender: string,              // 'user' | 'company'
+  text: string,                // Message text content
+  actionButtons?: ActionButton[], // Action buttons (ONLY for company messages, max 3)
+  timestamp: string,           // ISO timestamp
+  read: boolean,               // Read status (default: false)
+  deleted: boolean,           // Soft delete flag (default: false)
+}
+```
+
+### Action Button Object
+**Type:** `object`  
+**Description:** Action button for company messages (enables deep linking to app screens)
+
+```typescript
+{
+  label: string,               // Button label (e.g., "View Product", "Complete Registration")
+  action: string,              // Action type: 'product' | 'registration' | 'about' | 'enable_geolocation' | 'custom'
+  target?: string,             // Target (required for 'product' and 'custom' actions)
+                               // For 'product': ERPNext product name (e.g., "WEB-ITM-0002")
+                               // For 'custom': URL or deep link path
+  metadata?: object,           // Additional metadata for action (optional)
+}
+```
+
+**Action Types:**
+- **`product`**: Navigate to product detail page (requires `target`: product name)
+- **`registration`**: Navigate to registration form
+- **`about`**: Navigate to about page
+- **`enable_geolocation`**: Request geolocation permission
+- **`custom`**: Custom deep link/action (requires `target`: URL or path)
 
 ---
 

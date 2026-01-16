@@ -4,6 +4,7 @@ const { hashPassword, verifyPassword } = require('../services/auth/password');
 const {
   createUser,
   createAnonymousUser,
+  getUserById,
   getUserByEmail,
   getUserByUsername,
   getUserByGoogleId,
@@ -95,6 +96,13 @@ router.post(
       verificationMethod, 
       deviceId, 
       googleId,
+      first_name,
+      surname,
+      age,
+      occupation,
+      fitness_level,
+      gender,
+      fitness_goal,
       province,
       city,
       whatsapp_number,
@@ -268,17 +276,22 @@ router.post(
       };
     }
 
+    // Get updated user to ensure we have the latest userStatus
+    const updatedUser = await getUserById(user.id);
+
     return res.status(201).json({
       success: true,
       data: {
         user: {
-          id: user.id,
-          email: user.email,
-          username: user.username,
-          isVerified: user.isVerified,
+          id: updatedUser.id,
+          email: updatedUser.email,
+          username: updatedUser.username,
+          isVerified: updatedUser.isVerified,
+          isRegistered: updatedUser.isRegistered,
+          userStatus: updatedUser.userStatus || 'registered',
         },
         ...(tokens || {}),
-        needsVerification: !user.isVerified,
+        needsVerification: !updatedUser.isVerified,
       },
     });
   })
@@ -455,13 +468,13 @@ router.post(
       if (existingAnonymousUser) {
         user = await updateUser(existingAnonymousUser.id, {
           isRegistered: true,
-          username: normalizeUsername(name || email?.split('@')[0] || `user_${existingAnonymousUser.id.substring(0, 8)}`),
+          username: normalizeUsername(name || email?.split('@')[0] || `user_${existingAnonymousUser.id}`),
           email: normalizeEmail(email),
           passwordHash: null,
           googleId,
           isVerified: true,
           verificationMethod: 'google',
-          status: 'active',
+          accountStatus: 'active',
           deviceModel: deviceModel || existingAnonymousUser.deviceModel,
           osModel: osModel || existingAnonymousUser.osModel,
           // Preserve existing geolocation and other data
@@ -469,7 +482,7 @@ router.post(
       } else {
         // Create new user
         user = await createUser({
-          username: normalizeUsername(name || email?.split('@')[0] || `user_${generateUserId().substring(0, 8)}`),
+          username: normalizeUsername(name || email?.split('@')[0] || `user_${await generateUserId()}`),
           email,
           passwordHash: null, // No password for Google OAuth
           googleId,
@@ -827,6 +840,9 @@ router.put(
 
     // Get updated user (after all updates)
     const updatedUser = await getUserById(userId);
+    if (!updatedUser) {
+      throw new NotFoundError('User not found after update');
+    }
 
     return res.json({
       success: true,

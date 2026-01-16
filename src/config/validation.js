@@ -4,6 +4,12 @@ const { z } = require('zod');
  * Common reusable schemas
  */
 
+// User ID format: 4-character base 36 (0-9, A-Z)
+const userIdSchema = z
+  .string()
+  .length(4, 'User ID must be exactly 4 characters')
+  .regex(/^[0-9A-Z]{4}$/, 'User ID must be 4-character base 36 (0-9, A-Z)');
+
 // ERPNext name format: e.g., WEB-ITM-0002
 const erpnextNameSchema = z
   .string()
@@ -317,7 +323,7 @@ const loginSchema = z.object({
 
 // Verify schema
 const verifySchema = z.object({
-  userId: z.string().min(1, 'User ID required'),
+  userId: userIdSchema,
   code: z.string().length(6, 'Code must be 6 digits'),
   method: z.enum(['sms', 'whatsapp']),
 });
@@ -432,6 +438,53 @@ const geolocationUpdateRequestSchema = z.object({
   query: z.object({}).passthrough(),
 });
 
+// Messaging schemas
+const actionButtonSchema = z.object({
+  label: z.string().min(1, 'Button label required').max(50, 'Button label too long'),
+  action: z.enum(['product', 'registration', 'about', 'enable_geolocation', 'custom'], {
+    errorMap: () => ({ message: 'Invalid action type' }),
+  }),
+  target: z.string().optional(),
+  metadata: z.record(z.any()).optional(),
+}).refine((data) => {
+  // target is required for 'product' and 'custom' actions
+  if ((data.action === 'product' || data.action === 'custom') && !data.target) {
+    return false;
+  }
+  return true;
+}, {
+  message: 'target is required for product and custom actions',
+  path: ['target'],
+});
+
+const sendMessageSchema = z.object({
+  text: z.string().min(1, 'Message text required').max(5000, 'Message text too long'),
+  actionButtons: z.array(actionButtonSchema).max(3, 'Maximum 3 action buttons allowed').optional(),
+  targetUserId: userIdSchema.optional(), // For company messages targeting specific user
+});
+
+const sendMessageRequestSchema = z.object({
+  params: z.object({}).passthrough(),
+  body: sendMessageSchema,
+  query: z.object({}).passthrough(),
+});
+
+const markMessageReadRequestSchema = z.object({
+  params: z.object({
+    messageId: z.string().min(1, 'Message ID required'),
+  }),
+  body: z.object({}).passthrough(),
+  query: z.object({}).passthrough(),
+});
+
+const deleteMessageRequestSchema = z.object({
+  params: z.object({
+    messageId: z.string().min(1, 'Message ID required'),
+  }),
+  body: z.object({}).passthrough(),
+  query: z.object({}).passthrough(),
+});
+
 // Combined request schemas for middleware
 const signupRequestSchema = z.object({
   params: z.object({}).passthrough(),
@@ -489,6 +542,7 @@ const verifyEmailRequestSchema = z.object({
 
 module.exports = {
   // Common schemas
+  userIdSchema,
   erpnextNameSchema,
   itemCodeSchema,
   sizeUnitSchema,
@@ -551,5 +605,12 @@ module.exports = {
   anonymousUserRequestSchema,
   deviceInfoRequestSchema,
   geolocationUpdateRequestSchema,
+
+  // Messaging schemas
+  actionButtonSchema,
+  sendMessageSchema,
+  sendMessageRequestSchema,
+  markMessageReadRequestSchema,
+  deleteMessageRequestSchema,
 };
 

@@ -460,8 +460,10 @@ async function setCacheHash(entityType, entityId, data, metadata = {}) {
     // Set hash fields
     await redis.hset(cacheKey, hashFields);
 
-    // Always set TTL (Friday-only entities and stock now have TTL)
-    await redis.expire(cacheKey, ttl);
+    // Set TTL only if ttl > 0 (0 means persistent, no expiration)
+    if (ttl > 0) {
+      await redis.expire(cacheKey, ttl);
+    }
 
     return true;
   } catch (error) {

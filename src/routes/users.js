@@ -16,7 +16,7 @@ const {
 const { handleAsyncErrors } = require('../utils/error-utils');
 const { ValidationError, NotFoundError } = require('../utils/errors');
 const { extractDeviceId } = require('../middleware/device-id');
-const { verifyToken, JWT_SECRET } = require('../middleware/auth');
+const { verifyToken, JWT_SECRET, generateAccessToken, generateRefreshToken } = require('../middleware/auth');
 
 // Apply device ID extraction middleware
 router.use(extractDeviceId);
@@ -69,11 +69,25 @@ router.post(
       location_consent || false
     );
 
+    // Generate tokens for anonymous user (unregistered users can authenticate)
+    const payload = {
+      userId: user.id,
+      email: user.email || null,
+      username: user.username || null,
+    };
+
+    const tokens = {
+      accessToken: generateAccessToken(payload),
+      refreshToken: generateRefreshToken(payload),
+    };
+
     return res.status(201).json({
       success: true,
       data: {
         userId: user.id,
         isRegistered: user.isRegistered,
+        userStatus: user.userStatus || 'unregistered',
+        ...tokens, // Add access and refresh tokens
       },
     });
   })

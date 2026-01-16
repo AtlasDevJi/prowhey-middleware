@@ -81,15 +81,14 @@ async function authenticate(req, res, next) {
       throw new UnauthorizedError('User not found');
     }
 
-    // Check if user is verified
-    if (!user.isVerified) {
-      throw new UnauthorizedError('Account not verified');
-    }
-
     // Check if user is deleted
     if (user.deleted) {
       throw new UnauthorizedError('Account has been deleted');
     }
+
+    // Allow unregistered users to authenticate (they can interact with app but have restrictions in frontend)
+    // Registered users still need to be verified for full access, but unregistered users can authenticate
+    // Note: Frontend handles restrictions based on userStatus
 
     // Attach user to request
     req.user = user;

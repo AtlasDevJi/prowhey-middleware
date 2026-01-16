@@ -1,6 +1,7 @@
 const { readMultipleStreams } = require('./stream-manager');
 const { filterEntriesNeedingSync, getEntityForSync } = require('./change-detector');
 const { filterNotifications } = require('../notifications/notification-filter');
+const { filterMessages } = require('../messaging/message-filter');
 const { logger } = require('../logger');
 
 /**
@@ -8,7 +9,7 @@ const { logger } = require('../logger');
  */
 const ENTITY_FREQUENCIES = {
   fast: ['view', 'comment', 'user'], // High-frequency (5-15 min)
-  medium: ['stock', 'notification', 'announcement'], // Medium-frequency (hourly)
+  medium: ['stock', 'notification', 'announcement', 'message'], // Medium-frequency (hourly)
   slow: ['product', 'price', 'hero', 'home', 'bundle'], // Low-frequency (daily or on-demand)
 };
 
@@ -72,7 +73,7 @@ async function processSync(
         continue;
       }
 
-      // For notifications, apply user-based filtering first
+      // For notifications and messages, apply user-based filtering first
       let entriesToProcess = entries;
       if (entityType === 'notification' && userId) {
         entriesToProcess = filterNotifications(
@@ -85,6 +86,9 @@ async function processSync(
           userDeviceId,
           isRegistered
         );
+      } else if (entityType === 'message' && userId) {
+        // Filter messages by userId (messages are user-scoped)
+        entriesToProcess = await filterMessages(entries, userId);
       }
 
       // Filter entries that actually need sync (hash comparison)

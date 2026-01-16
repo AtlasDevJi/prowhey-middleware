@@ -11,9 +11,9 @@ This document explains the Redis data architecture used in Prowhey Middleware, s
 **User data IS stored as a single JSON object** in Redis:
 
 ```
-Key: user:usr_abc123
+Key: user:0001
 Value: {
-  "id": "usr_abc123",
+  "id": "0001",
   "email": "user@example.com",
   "username": "johndoe",
   "firstName": "John",
@@ -49,13 +49,13 @@ The separate keys you see (like `email:user@example.com`, `device:device-123`) a
 - Consistent data state
 
 #### 2. **Fast Primary Lookups**
-- Get user by ID: `GET user:usr_abc123` (O(1))
+- Get user by ID: `GET user:0001` (O(1))
 - All data retrieved in one operation
 - No need to fetch multiple keys
 
 #### 3. **Efficient Indexes for Secondary Lookups**
-- Find user by email: `GET email:user@example.com` → returns userId → then `GET user:usr_abc123`
-- Find user by device: `GET device:device-123` → returns userId → then `GET user:usr_abc123`
+- Find user by email: `GET email:user@example.com` → returns userId → then `GET user:0001`
+- Find user by device: `GET device:device-123` → returns userId → then `GET user:0001`
 - Much faster than scanning all user objects
 
 #### 4. **Memory Efficiency**
@@ -77,11 +77,11 @@ The separate keys you see (like `email:user@example.com`, `device:device-123`) a
 #### ❌ If We Used Separate Keys for Each Field:
 
 ```
-user:usr_abc123:email = "user@example.com"
-user:usr_abc123:firstName = "John"
-user:usr_abc123:surname = "Doe"
-user:usr_abc123:age = 28
-user:usr_abc123:occupation = "Software Engineer"
+user:0001:email = "user@example.com"
+user:0001:firstName = "John"
+user:0001:surname = "Doe"
+user:0001:age = 28
+user:0001:occupation = "Software Engineer"
 // ... 50+ more keys per user
 ```
 
@@ -95,10 +95,10 @@ user:usr_abc123:occupation = "Software Engineer"
 #### ✅ Current Architecture (Single Object + Indexes):
 
 ```
-user:usr_abc123 = {complete JSON object}  ← Primary storage
-email:user@example.com = "usr_abc123"     ← Index (lookup only)
-device:device-123 = "usr_abc123"          ← Index (lookup only)
-phone:+966501234567 = "usr_abc123"        ← Index (lookup only)
+user:0001 = {complete JSON object}  ← Primary storage
+email:user@example.com = "0001"     ← Index (lookup only)
+device:device-123 = "0001"          ← Index (lookup only)
+phone:+966501234567 = "0001"        ← Index (lookup only)
 ```
 
 **Benefits:**
@@ -153,12 +153,12 @@ non_registered:users → Set of userIds
 **Step 1:** Lookup index
 ```bash
 GET email:user@example.com
-# Returns: "usr_abc123"
+# Returns: "0001"
 ```
 
 **Step 2:** Get user data
 ```bash
-GET user:usr_abc123
+GET user:0001
 # Returns: Complete user JSON object
 ```
 
@@ -168,14 +168,14 @@ GET user:usr_abc123
 
 **Step 1:** Get current user
 ```bash
-GET user:usr_abc123
+GET user:0001
 ```
 
 **Step 2:** Update user object (if email changed, update index too)
 ```bash
-SET user:usr_abc123 {updated JSON}
+SET user:0001 {updated JSON}
 DEL email:old@example.com  # If email changed
-SET email:new@example.com "usr_abc123"  # If email changed
+SET email:new@example.com "0001"  # If email changed
 ```
 
 **Result:** User data updated atomically, indexes stay in sync

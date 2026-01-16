@@ -15,9 +15,10 @@ function errorHandler(err, req, res, _next) {
   const isOperational = isOperationalError(err);
 
   // If not operational, wrap in InternalServerError
+  // Include original error message in development
   const error = isOperational
     ? err
-    : new InternalServerError('An unexpected error occurred');
+    : new InternalServerError(process.env.NODE_ENV === 'development' ? err.message : 'An unexpected error occurred');
 
   // Log error with context
   const errorData = formatErrorForLogging(error, req);

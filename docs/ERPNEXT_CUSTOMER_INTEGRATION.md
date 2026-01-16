@@ -24,7 +24,7 @@ Two fields have been added to the user model:
 
 Both fields are stored in the user JSON object in Redis:
 ```
-Key: user:usr_abc123
+Key: user:0001
 Value: {
   ...
   "erpnextCustomerId": "CUST-001" or null,
@@ -49,7 +49,7 @@ Value: {
 **Manual Setup (Current):**
 ```bash
 # Get user data
-GET user:usr_abc123
+GET user:0001
 
 # Update user with ERPNext customer ID and approval
 # (Use admin endpoint or direct Redis update)
@@ -60,7 +60,7 @@ GET user:usr_abc123
 const { updateUser } = require('./src/services/auth/user-storage');
 
 // Set ERPNext customer ID and approve customer
-await updateUser('usr_abc123', {
+await updateUser('0001', {
   erpnextCustomerId: 'CUST-001',
   approvedCustomer: true,
 });
@@ -148,7 +148,7 @@ PUT /api/admin/users/:userId
 **Direct Redis Update:**
 ```bash
 # Get current user
-GET user:usr_abc123
+GET user:0001
 
 # Update with new data (merge with existing)
 # Use Redis SET with complete JSON object
@@ -166,7 +166,7 @@ async function approveCustomer(userId, erpnextCustomerId) {
 }
 
 // Usage
-await approveCustomer('usr_abc123', 'CUST-001');
+await approveCustomer('0001', 'CUST-001');
 ```
 
 ### Checking Customer Status
@@ -179,7 +179,7 @@ GET /api/auth/me
   "success": true,
   "data": {
     "user": {
-      "id": "usr_abc123",
+      "id": "0001",
       "erpnextCustomerId": "CUST-001",
       "approvedCustomer": true,
       ...
@@ -190,7 +190,7 @@ GET /api/auth/me
 
 **Direct Redis:**
 ```bash
-GET user:usr_abc123
+GET user:0001
 # Parse JSON and check erpnextCustomerId and approvedCustomer fields
 ```
 

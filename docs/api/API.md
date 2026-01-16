@@ -124,7 +124,7 @@ X-Device-ID: device-123
   "success": true,
   "data": {
     "user": {
-      "id": "usr_abc123",
+      "id": "0001",
       "email": "john@example.com",
       "username": "johndoe",
       "isVerified": false
@@ -161,7 +161,7 @@ Content-Type: application/json
 X-Device-ID: device-123
 
 {
-  "userId": "usr_abc123",
+  "userId": "0001",
   "code": "123456",
   "method": "sms"
 }
@@ -176,7 +176,7 @@ X-Device-ID: device-123
     "accessToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
     "refreshToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
     "user": {
-      "id": "usr_abc123",
+      "id": "0001",
       "email": "john@example.com",
       "username": "johndoe",
       "isVerified": true
@@ -233,7 +233,7 @@ X-Device-ID: device-123
     "accessToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
     "refreshToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
     "user": {
-      "id": "usr_abc123",
+      "id": "0001",
       "email": "john@example.com",
       "username": "johndoe",
       "isVerified": true
@@ -289,7 +289,7 @@ X-Device-ID: device-123
     "accessToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
     "refreshToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
     "user": {
-      "id": "usr_abc123",
+      "id": "0001",
       "email": "john@gmail.com",
       "username": "john",
       "isVerified": true
@@ -324,7 +324,7 @@ X-Device-ID: device-123
   "success": true,
   "data": {
     "user": {
-      "id": "usr_abc123",
+      "id": "0001",
       "email": "john@example.com",
       "username": "johndoe",
       "phone": "+1234567890",
@@ -402,7 +402,7 @@ X-Device-ID: device-123
   "success": true,
   "data": {
     "user": {
-      "id": "usr_abc123",
+      "id": "0001",
       "email": "john@example.com",
       "username": "newusername",
       "phone": "+1234567890",
@@ -438,7 +438,7 @@ X-Device-ID: device-123
   "success": true,
   "data": {
     "user": {
-      "id": "usr_abc123",
+      "id": "0001",
       "userStatus": "unregistered",
       "accountStatus": "active",
       "firstName": "John",
@@ -506,7 +506,7 @@ X-Device-ID: device-123
   "success": true,
   "data": {
     "user": {
-      "id": "usr_abc123",
+      "id": "0001",
       "email": "newemail@example.com",
       "username": "johndoe",
       "phone": "+1234567890",
@@ -791,6 +791,300 @@ GET /api/auth/check-username?username=johndoe
 **Error Responses:**
 
 - `400`: Username parameter required
+
+---
+
+## Messaging Endpoints
+
+All messaging endpoints are prefixed with `/api/messaging` and require authentication (JWT Bearer token).
+
+### POST /api/messaging/send
+
+Send a message from user to company.
+
+**Note:** Company messages are created via Redis/admin access (not exposed via public API for security). Company messages can include action buttons for deep linking.
+
+| Header | Type | Required | Description |
+|--------|------|----------|-------------|
+| `Authorization` | string | Yes | `Bearer <accessToken>` |
+| `X-Device-ID` | string | Yes | Unique device identifier |
+| `Content-Type` | string | Yes | Must be `application/json` |
+
+| Body Parameter | Type | Required | Description |
+|----------------|------|----------|-------------|
+| `text` | string | Yes | Message text (1-5000 characters) |
+
+**Example Request:**
+
+```http
+POST /api/messaging/send
+Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+Content-Type: application/json
+X-Device-ID: device-123
+
+{
+  "text": "Question about product availability"
+}
+```
+
+**Response (201 Created):**
+
+```json
+{
+  "success": true,
+  "data": {
+    "message": {
+      "messageId": "msg_abc123...",
+      "userId": "0002...",
+      "sender": "user",
+      "text": "Question about product availability",
+      "timestamp": "2025-01-20T10:30:00.000Z"
+    }
+  }
+}
+```
+
+**Error Responses:**
+
+- `400`: Validation error (text too long, etc.)
+- `401`: Invalid or expired token
+- `400`: actionButtons provided (only allowed for company messages)
+
+---
+
+### GET /api/messaging
+
+Get user's messages (optional, sync preferred for efficiency).
+
+| Header | Type | Required | Description |
+|--------|------|----------|-------------|
+| `Authorization` | string | Yes | `Bearer <accessToken>` |
+| `X-Device-ID` | string | Yes | Unique device identifier |
+
+| Query Parameter | Type | Required | Description |
+|----------------|------|----------|-------------|
+| `limit` | number | No | Maximum messages to return (default: 50) |
+| `offset` | number | No | Offset for pagination (default: 0) |
+
+**Example Request:**
+
+```http
+GET /api/messaging?limit=20&offset=0
+Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+X-Device-ID: device-123
+```
+
+**Response (200 OK):**
+
+```json
+{
+  "success": true,
+  "data": {
+    "messages": [
+      {
+        "messageId": "msg_abc123...",
+        "userId": "0002...",
+        "sender": "company",
+        "text": "Your question has been answered",
+        "actionButtons": [
+          {
+            "label": "View Product",
+            "action": "product",
+            "target": "WEB-ITM-0002"
+          },
+          {
+            "label": "Complete Registration",
+            "action": "registration"
+          }
+        ],
+        "timestamp": "2025-01-20T10:35:00.000Z",
+        "read": false
+      }
+    ],
+    "unreadCount": 3,
+    "total": 1
+  }
+}
+```
+
+**Error Responses:**
+
+- `401`: Invalid or expired token
+
+---
+
+### PUT /api/messaging/:messageId/read
+
+Mark a message as read.
+
+| Header | Type | Required | Description |
+|--------|------|----------|-------------|
+| `Authorization` | string | Yes | `Bearer <accessToken>` |
+| `X-Device-ID` | string | Yes | Unique device identifier |
+
+| Path Parameter | Type | Required | Description |
+|----------------|------|----------|-------------|
+| `messageId` | string | Yes | Message ID |
+
+**Example Request:**
+
+```http
+PUT /api/messaging/msg_abc123/read
+Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+X-Device-ID: device-123
+```
+
+**Response (200 OK):**
+
+```json
+{
+  "success": true,
+  "data": {
+    "message": {
+      "messageId": "msg_abc123...",
+      "read": true
+    }
+  }
+}
+```
+
+**Error Responses:**
+
+- `401`: Invalid or expired token
+- `403`: Not authorized (can only mark own messages as read)
+- `404`: Message not found
+
+---
+
+### DELETE /api/messaging/:messageId
+
+Delete a message (soft delete).
+
+| Header | Type | Required | Description |
+|--------|------|----------|-------------|
+| `Authorization` | string | Yes | `Bearer <accessToken>` |
+| `X-Device-ID` | string | Yes | Unique device identifier |
+
+| Path Parameter | Type | Required | Description |
+|----------------|------|----------|-------------|
+| `messageId` | string | Yes | Message ID |
+
+**Example Request:**
+
+```http
+DELETE /api/messaging/msg_abc123
+Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+X-Device-ID: device-123
+```
+
+**Response (200 OK):**
+
+```json
+{
+  "success": true,
+  "message": "Message deleted successfully"
+}
+```
+
+**Error Responses:**
+
+- `401`: Invalid or expired token
+- `403`: Not authorized (can only delete own messages)
+- `404`: Message not found
+
+---
+
+### GET /api/messaging/unread-count
+
+Get count of unread messages for authenticated user.
+
+| Header | Type | Required | Description |
+|--------|------|----------|-------------|
+| `Authorization` | string | Yes | `Bearer <accessToken>` |
+| `X-Device-ID` | string | Yes | Unique device identifier |
+
+**Example Request:**
+
+```http
+GET /api/messaging/unread-count
+Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+X-Device-ID: device-123
+```
+
+**Response (200 OK):**
+
+```json
+{
+  "success": true,
+  "data": {
+    "unreadCount": 3
+  }
+}
+```
+
+**Error Responses:**
+
+- `401`: Invalid or expired token
+
+---
+
+### Company Message Creation (Admin/Redis)
+
+Company messages are created via Redis/admin access (not exposed via public API for security).
+
+**Message Structure for Company:**
+
+```javascript
+{
+  messageId: "msg_<hex>",
+  userId: "0001", // Target user ID (REQUIRED)
+  sender: "company",
+  text: "Your question has been answered",
+  actionButtons: [
+    {
+      label: "View Product",
+      action: "product",
+      target: "WEB-ITM-0002" // ERPNext product name
+    },
+    {
+      label: "Complete Registration",
+      action: "registration"
+    },
+    {
+      label: "Enable Location",
+      action: "enable_geolocation"
+    }
+  ],
+  timestamp: "2025-01-20T10:35:00.000Z",
+  read: false,
+  deleted: false
+}
+```
+
+**Action Button Types:**
+
+- **`product`**: Navigate to product detail page (requires `target`: product name)
+- **`registration`**: Navigate to registration form
+- **`about`**: Navigate to about page
+- **`enable_geolocation`**: Request geolocation permission
+- **`custom`**: Custom deep link/action (requires `target`: URL or path)
+
+**Node.js Example (Admin):**
+
+```javascript
+const { createMessage } = require('./src/services/messaging/message-storage');
+
+// Company sends message to user
+await createMessage(
+  '0001', // Target user ID
+  'company',
+  'Your question has been answered',
+  [
+    { label: 'View Product', action: 'product', target: 'WEB-ITM-0002' },
+    { label: 'Complete Registration', action: 'registration' }
+  ]
+);
+```
 
 ---
 

@@ -1439,7 +1439,7 @@ async function signup(username, email, password) {
 **Registered User:**
 ```javascript
 {
-  id: "usr_abc123...",
+  id: "0001...",
   isRegistered: true,
   userStatus: "erpnext_customer", // Progressive status: 'unregistered' | 'registered' | 'erpnext_customer' | 'verified'
   accountStatus: "active", // Account health: 'active' | 'pending_verification' | 'disabled' | 'suspended'
@@ -1473,7 +1473,7 @@ async function signup(username, email, password) {
 **Unregistered User:**
 ```javascript
 {
-  id: "usr_xyz789...",
+  id: "0002...",
   isRegistered: false,
   userStatus: "unregistered", // Progressive status
   accountStatus: "active", // Account is active, just not registered yet
@@ -1730,6 +1730,366 @@ async function onLocationPermissionGranted() {
 
 ---
 
+## Messaging Integration
+
+The messaging system enables two-way communication between the company and app users. Messages are delivered via the sync mechanism for efficient delivery.
+
+### Message Sync (Hourly Check)
+
+**Recommended Approach:** Use the sync mechanism to check for new messages hourly when the app is open.
+
+**Endpoint:** `POST /api/sync/check-medium` (includes messages in medium-frequency entities)
+
+**Example:**
+
+```javascript
+async function checkForNewMessages(userId, lastSync) {
+  const accessToken = await getAccessToken();
+  if (!accessToken) {
+    return { messages: [], lastIds: lastSync };
+  }
+
+  const response = await fetch(`${BASE_URL}/api/sync/check-medium`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${accessToken}`,
+    },
+    body: JSON.stringify({
+      lastSync: lastSync || {},
+      userId: userId, // Required for message filtering
+      limit: 100,
+    }),
+  });
+
+  const result = await response.json();
+
+  if (result.inSync) {
+    return { messages: [], lastIds: lastSync };
+  }
+
+  // Filter messages from updates
+  const messages = (result.updates || []).filter(
+    (update) => update.entity_type === 'message'
+  );
+
+  // Update lastSync for messages
+  const newLastIds = {
+    ...lastSync,
+    ...(result.lastIds || {}),
+  };
+
+  return { messages, lastIds: newLastIds };
+}
+```
+
+### Handling Action Buttons
+
+Company messages can include action buttons that enable deep linking to specific app screens.
+
+**Action Button Structure:**
+
+```javascript
+{
+  label: string,        // Button label (e.g., "View Product")
+  action: string,       // Action type: 'product' | 'registration' | 'about' | 'enable_geolocation' | 'custom'
+  target?: string,      // Target (required for 'product' and 'custom')
+  metadata?: object     // Additional metadata
+}
+```
+
+**Action Handler Example:**
+
+```javascript
+function handleActionButton(button, navigation) {
+  const { action, target, metadata } = button;
+
+  switch (action) {
+    case 'product':
+      // Navigate to product detail page
+      if (target) {
+        navigation.navigate('ProductDetail', { productName: target });
+      }
+      break;
+
+    case 'registration':
+      // Navigate to registration form
+      navigation.navigate('Registration');
+      break;
+
+    case 'about':
+      // Navigate to about page
+      navigation.navigate('About');
+      break;
+
+    case 'enable_geolocation':
+      // Request geolocation permission
+      requestLocationPermission()
+        .then(() => {
+          // Update geolocation via API
+          return updateGeolocation(lat, lng, true);
+        })
+        .then(() => {
+          console.log('Geolocation enabled');
+        })
+        .catch((error) => {
+          console.error('Failed to enable geolocation:', error);
+        });
+      break;
+
+    case 'custom':
+      // Custom deep link or action
+      if (target) {
+        if (target.startsWith('http://') || target.startsWith('https://')) {
+          // Open URL
+          Linking.openURL(target);
+        } else {
+          // Navigate to custom screen
+          navigation.navigate(target, metadata || {});
+        }
+      }
+      break;
+
+    default:
+      console.warn('Unknown action type:', action);
+  }
+}
+```
+
+### Sending Messages to Company
+
+**Endpoint:** `POST /api/messaging/send` (requires authentication)
+
+**Example:**
+
+```javascript
+async function sendMessageToCompany(text) {
+  const accessToken = await getAccessToken();
+  if (!accessToken) {
+    throw new Error('User must be logged in');
+  }
+
+  const response = await fetch(`${BASE_URL}/api/messaging/send`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${accessToken}`,
+      'X-Device-ID': await DeviceInfo.getUniqueId(),
+    },
+    body: JSON.stringify({
+      text: text,
+    }),
+  });
+
+  const data = await response.json();
+
+  if (!data.success) {
+    throw new Error(data.message || 'Failed to send message');
+  }
+
+  return data.data.message;
+}
+```
+
+### Message Display Component
+
+**Example React Native Component:**
+
+```javascript
+import React, { useState, useEffect } from 'react';
+import { View, Text, TouchableOpacity, ScrollView } from 'react-native';
+import { checkForNewMessages, sendMessageToCompany } from './api/messaging';
+import { handleActionButton } from './utils/actionButtons';
+
+function MessagesScreen({ navigation, userId }) {
+  const [messages, setMessages] = useState([]);
+  const [unreadCount, setUnreadCount] = useState(0);
+  const [lastSync, setLastSync] = useState({});
+
+  useEffect(() => {
+    // Check for messages on mount
+    loadMessages();
+
+    // Set up hourly check for new messages
+    const interval = setInterval(() => {
+      checkForNewMessages();
+    }, 60 * 60 * 1000); // 1 hour
+
+    return () => clearInterval(interval);
+  }, []);
+
+  async function loadMessages() {
+    try {
+      const { messages: newMessages, lastIds } = await checkForNewMessages(
+        userId,
+        lastSync
+      );
+
+      if (newMessages.length > 0) {
+        setMessages((prev) => [...newMessages, ...prev]);
+        setLastSync(lastIds);
+      }
+
+      // Update unread count
+      const unread = messages.filter((msg) => !msg.read).length;
+      setUnreadCount(unread);
+    } catch (error) {
+      console.error('Error loading messages:', error);
+    }
+  }
+
+  async function handleButtonPress(button) {
+    handleActionButton(button, navigation);
+  }
+
+  return (
+    <ScrollView>
+      {messages.map((message) => (
+        <View key={message.messageId} style={styles.messageContainer}>
+          <Text style={styles.sender}>
+            {message.sender === 'company' ? 'Company' : 'You'}
+          </Text>
+          <Text style={styles.text}>{message.text}</Text>
+          <Text style={styles.timestamp}>
+            {new Date(message.timestamp).toLocaleString()}
+          </Text>
+
+          {/* Action Buttons (company messages only) */}
+          {message.sender === 'company' && message.actionButtons && (
+            <View style={styles.actionButtons}>
+              {message.actionButtons.map((button, index) => (
+                <TouchableOpacity
+                  key={index}
+                  style={styles.actionButton}
+                  onPress={() => handleButtonPress(button)}
+                >
+                  <Text style={styles.actionButtonText}>{button.label}</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+          )}
+        </View>
+      ))}
+    </ScrollView>
+  );
+}
+```
+
+### Direct Message Fetch (Optional)
+
+While sync is preferred, you can also fetch messages directly:
+
+**Endpoint:** `GET /api/messaging` (requires authentication)
+
+**Example:**
+
+```javascript
+async function getMessages(limit = 50, offset = 0) {
+  const accessToken = await getAccessToken();
+  if (!accessToken) {
+    throw new Error('User must be logged in');
+  }
+
+  const response = await fetch(
+    `${BASE_URL}/api/messaging?limit=${limit}&offset=${offset}`,
+    {
+      method: 'GET',
+      headers: {
+        'Authorization': `Bearer ${accessToken}`,
+        'X-Device-ID': await DeviceInfo.getUniqueId(),
+      },
+    }
+  );
+
+  const data = await response.json();
+
+  if (!data.success) {
+    throw new Error(data.message || 'Failed to get messages');
+  }
+
+  return {
+    messages: data.data.messages,
+    unreadCount: data.data.unreadCount,
+  };
+}
+```
+
+### Mark Message as Read
+
+**Endpoint:** `PUT /api/messaging/:messageId/read`
+
+**Example:**
+
+```javascript
+async function markMessageAsRead(messageId) {
+  const accessToken = await getAccessToken();
+  if (!accessToken) {
+    throw new Error('User must be logged in');
+  }
+
+  const response = await fetch(
+    `${BASE_URL}/api/messaging/${messageId}/read`,
+    {
+      method: 'PUT',
+      headers: {
+        'Authorization': `Bearer ${accessToken}`,
+        'X-Device-ID': await DeviceInfo.getUniqueId(),
+      },
+    }
+  );
+
+  const data = await response.json();
+
+  if (!data.success) {
+    throw new Error(data.message || 'Failed to mark message as read');
+  }
+
+  return data.data.message;
+}
+```
+
+### Get Unread Count
+
+**Endpoint:** `GET /api/messaging/unread-count`
+
+**Example:**
+
+```javascript
+async function getUnreadMessageCount() {
+  const accessToken = await getAccessToken();
+  if (!accessToken) {
+    return 0;
+  }
+
+  const response = await fetch(`${BASE_URL}/api/messaging/unread-count`, {
+    method: 'GET',
+    headers: {
+      'Authorization': `Bearer ${accessToken}`,
+      'X-Device-ID': await DeviceInfo.getUniqueId(),
+    },
+  });
+
+  const data = await response.json();
+
+  if (!data.success) {
+    return 0;
+  }
+
+  return data.data.unreadCount;
+}
+```
+
+### Best Practices
+
+1. **Use Sync for Message Delivery**: Check for messages via `/api/sync/check-medium` hourly when app is open
+2. **Store lastSync**: Persist `lastSync` object (including `message` key) in AsyncStorage
+3. **Handle Action Buttons**: Implement action button handlers for all supported actions
+4. **Mark as Read**: Mark messages as read when user views them
+5. **Show Unread Badge**: Display unread count badge in UI
+6. **Error Handling**: Handle network errors gracefully, fallback to cached messages
+
+---
+
 ## Sync API Integration
 
 The sync API provides efficient incremental synchronization. See [SYNC_API.md](./SYNC_API.md) for complete documentation.
@@ -1917,6 +2277,23 @@ async function processUpdate(update) {
             timestamp: Date.now()
           })
         );
+      break;
+      
+      case 'message':
+        // Store message in local cache
+        await AsyncStorage.setItem(
+          MESSAGE_CACHE_KEY(entity_id),
+          JSON.stringify({
+            data: data,
+            timestamp: Date.now()
+          })
+        );
+        // Also add to messages list
+        await addMessageToList(data);
+        // Show notification if unread
+        if (!data.read) {
+          showMessageNotification(data);
+        }
       break;
   }
 }
