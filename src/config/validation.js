@@ -344,6 +344,8 @@ const googleLoginSchema = z.object({
 });
 
 // Update profile schema (enhanced with new fields)
+// Note: passwordConfirmed is optional - required only for registered users updating sensitive fields
+// Unregistered users can update profile fields without password confirmation
 const updateProfileSchema = z.object({
   username: z
     .string()
@@ -353,9 +355,7 @@ const updateProfileSchema = z.object({
     .optional(),
   email: z.string().email('Invalid email').optional(),
   phone: z.string().regex(phoneRegex, 'Invalid phone number format').optional(),
-  passwordConfirmed: z.boolean().refine((val) => val === true, {
-    message: 'Password confirmation required',
-  }),
+  passwordConfirmed: z.boolean().optional(), // Optional - required only for registered users updating sensitive fields
   // New profile fields
   first_name: z.string().max(50).optional(),
   surname: z.string().max(50).optional(),
@@ -376,6 +376,7 @@ const updateProfileSchema = z.object({
   os_model: z.string().max(100).optional(),
   erpnext_customer_id: z.string().max(100).optional(), // ERPNext customer ID (set from Redis/admin)
   approved_customer: z.boolean().optional(), // Whether customer is approved for orders
+  userStatus: z.enum(['unregistered', 'registered', 'erpnext_customer', 'verified']).optional(), // Optional explicit status update (must be progression forward)
 });
 
 // Anonymous user creation schema

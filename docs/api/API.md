@@ -331,12 +331,16 @@ X-Device-ID: device-123
       "erpnextCustomerId": "CUST-001",
       "approvedCustomer": true,
       "isVerified": true,
+      "accountStatus": "active",
+      "userStatus": "erpnext_customer",
       "createdAt": "2025-01-15T10:00:00.000Z",
       "lastLogin": "2025-01-15T10:30:00.000Z"
     }
   }
 }
 ```
+
+**Note:** `userStatus` tracks user progression: `unregistered` → `registered` → `erpnext_customer` → `verified`. `accountStatus` tracks account health: `active`, `pending_verification`, `disabled`, `suspended`.
 
 **Error Responses:**
 
@@ -346,7 +350,11 @@ X-Device-ID: device-123
 
 ### PUT /api/auth/profile
 
-Update user profile (username, email, phone). Requires password confirmation handled client-side.
+Update user profile. Supports progressive updates for unregistered users (no password confirmation required for profile fields).
+
+**Progressive Updates:**
+- **Unregistered users** (`userStatus: 'unregistered'`): Can update profile fields (location, device info, personal details) without password confirmation. Cannot update email/username (must use signup endpoint).
+- **Registered users** (`userStatus: 'registered'` or higher): Can update all fields. Password confirmation required for sensitive changes (email, username).
 
 | Header | Type | Required | Description |
 |--------|------|----------|-------------|
@@ -356,14 +364,22 @@ Update user profile (username, email, phone). Requires password confirmation han
 
 | Body Parameter | Type | Required | Description |
 |----------------|------|----------|-------------|
-| `username` | string | No | New username (3-32 chars) |
-| `email` | string | No | New email address |
+| `username` | string | No | New username (3-32 chars) - requires password confirmation for registered users |
+| `email` | string | No | New email address - requires password confirmation for registered users |
 | `phone` | string | No | New phone number (E.164 format) |
+| `first_name` | string | No | First name |
+| `surname` | string | No | Surname |
+| `age` | number | No | Age (13-120) |
+| `province` | string | No | Province name |
+| `city` | string | No | City name |
 | `erpnext_customer_id` | string | No | ERPNext customer ID (set from admin/Redis) |
 | `approved_customer` | boolean | No | Whether customer is approved for orders |
-| `passwordConfirmed` | boolean | Yes | Must be `true` (app verifies password client-side) |
+| `userStatus` | string | No | Explicit status update: 'unregistered' \| 'registered' \| 'erpnext_customer' \| 'verified' (must be progression forward) |
+| `passwordConfirmed` | boolean | No | Required only for registered users updating email/username |
 
-**Note:** If email is changed, user must verify new email with OTP.
+**Note:** 
+- If email is changed, user must verify new email with OTP.
+- `userStatus` automatically transitions when conditions are met (signup → registered, erpnextCustomerId set → erpnext_customer, idVerified → verified).
 
 **Example Request:**
 
@@ -392,7 +408,42 @@ X-Device-ID: device-123
       "phone": "+1234567890",
       "erpnextCustomerId": "CUST-001",
       "approvedCustomer": true,
-      "isVerified": true
+      "isVerified": true,
+      "accountStatus": "active",
+      "userStatus": "erpnext_customer"
+    }
+  }
+}
+```
+
+**Example Request - Progressive Update (Unregistered User):**
+
+```http
+PUT /api/auth/profile
+Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+Content-Type: application/json
+X-Device-ID: device-123
+
+{
+  "first_name": "John",
+  "province": "Damascus",
+  "city": "Damascus"
+}
+```
+
+**Response (200 OK) - Progressive Update:**
+
+```json
+{
+  "success": true,
+  "data": {
+    "user": {
+      "id": "usr_abc123",
+      "userStatus": "unregistered",
+      "accountStatus": "active",
+      "firstName": "John",
+      "province": "Damascus",
+      "city": "Damascus"
     }
   }
 }

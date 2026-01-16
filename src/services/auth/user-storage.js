@@ -31,6 +31,32 @@ function normalizeUsername(username) {
 }
 
 /**
+ * Compute user status based on user data
+ * Status progression: unregistered → registered → erpnext_customer → verified
+ * @param {object} user - User object
+ * @returns {string} User status: 'unregistered' | 'registered' | 'erpnext_customer' | 'verified'
+ */
+function computeUserStatus(user) {
+  // If user has verified ID and ERPNext customer ID, they are verified
+  if (user.idVerified && user.erpnextCustomerId) {
+    return 'verified';
+  }
+  
+  // If user has ERPNext customer ID, they are erpnext_customer
+  if (user.erpnextCustomerId) {
+    return 'erpnext_customer';
+  }
+  
+  // If user has email/username and password/googleId, they are registered
+  if ((user.email || user.username) && (user.passwordHash || user.googleId)) {
+    return 'registered';
+  }
+  
+  // Otherwise, unregistered
+  return 'unregistered';
+}
+
+/**
  * Create user in Redis
  * @param {object} userData - User data
  * @returns {Promise<object>} Created user object
@@ -44,6 +70,7 @@ async function createUser(userData) {
     // Determine if user is registered (has email/username and password or googleId)
     const isRegistered = !!(userData.email || userData.username) && (userData.passwordHash || userData.googleId);
     
+    // Build user object first to compute status
     const user = {
       id: userId,
       isRegistered: isRegistered,
@@ -85,10 +112,10 @@ async function createUser(userData) {
       customerType: userData.customerType || 'retail', // Default: retail
       
       // Security & Verification
-      idVerified: false, // ID verification status (for credit/trust)
-      idVerifiedAt: null, // Timestamp of ID verification
+      idVerified: userData.idVerified || false, // ID verification status (for credit/trust)
+      idVerifiedAt: userData.idVerifiedAt || null, // Timestamp of ID verification
       phoneVerified: userData.phoneVerified || false, // Phone number verification status
-      accountStatus: isRegistered ? (userData.isVerified ? 'active' : 'pending_verification') : 'anonymous', // active, pending_verification, disabled, suspended
+      accountStatus: isRegistered ? (userData.isVerified ? 'active' : 'pending_verification') : (userData.accountStatus || 'active'), // active, pending_verification, disabled, suspended
       fraudFlags: [], // Array of fraud flags (e.g., 'suspicious_activity', 'multiple_accounts', 'chargeback')
       trustScore: 100, // Trust score (0-100, higher is better)
       trustScoreUpdatedAt: now,
@@ -109,6 +136,10 @@ async function createUser(userData) {
       erpnextCustomerId: userData.erpnextCustomerId || null,
       approvedCustomer: userData.approvedCustomer || false, // Boolean: whether customer is approved for orders/payments
     };
+    
+    // Compute userStatus based on user data
+    // Allow explicit userStatus override, otherwise compute from data
+    user.userStatus = userData.userStatus || computeUserStatus(user);
 
     // Store user
     await redis.set(`user:${userId}`, JSON.stringify(user));
@@ -146,6 +177,7 @@ async function createUser(userData) {
       email: user.email, 
       username: user.username,
       isRegistered,
+      userStatus: user.userStatus,
       deviceId: user.deviceId 
     });
     return user;
@@ -171,6 +203,10 @@ async function getUserById(userId) {
     // Don't return deleted users (unless explicitly requested)
     if (user.deleted) {
       return null;
+    }
+    // Ensure userStatus is set (for backward compatibility with existing users)
+    if (!user.userStatus) {
+      user.userStatus = computeUserStatus(user);
     }
     return user;
   } catch (error) {
@@ -278,6 +314,63 @@ async function updateUser(userId, updates) {
     }
 
     const updated = { ...user, ...updates, id: userId }; // Preserve ID
+    
+    // Automatic userStatus transitions based on data changes
+    // Only progress forward, never downgrade (unless explicitly set)
+    if (!updates.userStatus) {
+      // Check if we should auto-transition status
+      const currentStatus = user.userStatus || computeUserStatus(user);
+      let newStatus = currentStatus;
+      
+      // Transition: unregistered → registered (when email/username + password added)
+      if (currentStatus === 'unregistered') {
+        const hasAuth = (updated.email || updated.username) && (updated.passwordHash || updated.googleId);
+        if (hasAuth) {
+          newStatus = 'registered';
+        }
+      }
+      
+      // Transition: registered → erpnext_customer (when erpnextCustomerId is set)
+      if ((currentStatus === 'registered' || currentStatus === 'unregistered') && updated.erpnextCustomerId) {
+        // Only transition if user has email/username (registered or ready to be)
+        const hasAuth = (updated.email || updated.username) && (updated.passwordHash || updated.googleId);
+        if (hasAuth || currentStatus === 'registered') {
+          newStatus = 'erpnext_customer';
+        }
+      }
+      
+      // Transition: erpnext_customer → verified (when idVerified becomes true)
+      if (currentStatus === 'erpnext_customer' && updated.idVerified && updated.erpnextCustomerId) {
+        newStatus = 'verified';
+      }
+      
+      // Only update if status actually changed
+      if (newStatus !== currentStatus) {
+        updated.userStatus = newStatus;
+        logger.info('User status auto-transitioned', { userId, from: currentStatus, to: newStatus });
+      } else {
+        // Ensure userStatus is set (for backward compatibility)
+        updated.userStatus = currentStatus;
+      }
+    } else {
+      // Explicit userStatus update - validate it's a valid progression
+      const currentStatus = user.userStatus || computeUserStatus(user);
+      const requestedStatus = updates.userStatus;
+      
+      // Status hierarchy: unregistered < registered < erpnext_customer < verified
+      const statusHierarchy = { 'unregistered': 0, 'registered': 1, 'erpnext_customer': 2, 'verified': 3 };
+      const currentLevel = statusHierarchy[currentStatus] || 0;
+      const requestedLevel = statusHierarchy[requestedStatus] || 0;
+      
+      // Only allow progression forward (or same level)
+      if (requestedLevel < currentLevel) {
+        logger.warn('Attempted to downgrade user status', { userId, currentStatus, requestedStatus });
+        // Reject downgrade - keep current status
+        updated.userStatus = currentStatus;
+      } else {
+        updated.userStatus = requestedStatus;
+      }
+    }
 
     // Update indexes if email/username changed
     if (updates.email && updates.email !== user.email) {
@@ -604,6 +697,8 @@ async function createAnonymousUser(deviceId, deviceModel = null, osModel = null,
       geolocation: locationConsent && geolocation ? geolocation : null,
       locationConsent,
       isRegistered: false,
+      userStatus: 'unregistered', // Explicitly set to unregistered
+      accountStatus: 'active', // Active account, just not registered yet
     };
     
     return await createUser(userData);
@@ -980,5 +1075,6 @@ module.exports = {
   getAllUsers,
   normalizeEmail,
   normalizeUsername,
+  computeUserStatus,
 };
 

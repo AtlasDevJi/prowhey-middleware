@@ -1318,37 +1318,50 @@ async function getCurrentUserProfile() {
 
 #### Update User Profile
 
-**Endpoint:** `PUT /api/auth/profile` (requires authentication)
+**Endpoint:** `PUT /api/auth/profile` (authentication optional for unregistered users)
+
+**Progressive Updates:**
+- **Unregistered users**: Can update profile fields (location, device info, personal details) without password confirmation. Cannot update email/username (must use signup endpoint).
+- **Registered users**: Can update all fields. Password confirmation required for sensitive changes (email, username).
 
 **Example:**
 ```javascript
 async function updateUserProfile(updates) {
-  const accessToken = await getAccessToken();
-  if (!accessToken) {
-    throw new Error('User must be logged in');
+  const accessToken = await getAccessToken(); // Optional - may be null for unregistered users
+  const deviceId = await DeviceInfo.getUniqueId();
+
+  const headers = {
+    'Content-Type': 'application/json',
+    'X-Device-ID': deviceId,
+  };
+
+  // Include auth token if available (for registered users)
+  if (accessToken) {
+    headers['Authorization'] = `Bearer ${accessToken}`;
   }
 
-  // Verify password client-side first
-  const passwordCorrect = await verifyPasswordLocally(
-    updates.currentPassword,
-    storedPasswordHash
-  );
-
-  if (!passwordCorrect) {
-    throw new Error('Invalid password');
+  // For registered users updating email/username, verify password client-side first
+  let passwordConfirmed = false;
+  if (accessToken && (updates.email || updates.username)) {
+    const passwordCorrect = await verifyPasswordLocally(
+      updates.currentPassword,
+      storedPasswordHash
+    );
+    if (!passwordCorrect) {
+      throw new Error('Invalid password');
+    }
+    passwordConfirmed = true;
   }
 
   const response = await fetch(`${BASE_URL}/api/auth/profile`, {
     method: 'PUT',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${accessToken}`,
-      'X-Device-ID': await DeviceInfo.getUniqueId(),
-    },
+    headers: headers,
     body: JSON.stringify({
       username: updates.username,
       email: updates.email,
       phone: updates.phone,
+      first_name: updates.firstName,
+      surname: updates.surname,
       province: updates.province,
       city: updates.city,
       whatsapp_number: updates.whatsappNumber,
@@ -1359,7 +1372,7 @@ async function updateUserProfile(updates) {
       customer_type: updates.customerType,
       erpnext_customer_id: updates.erpnextCustomerId, // Optional: ERPNext customer ID
       approved_customer: updates.approvedCustomer, // Optional: Customer approval status
-      passwordConfirmed: true, // App verified password
+      passwordConfirmed: passwordConfirmed, // Only required for registered users updating email/username
     }),
   });
 
@@ -1428,6 +1441,8 @@ async function signup(username, email, password) {
 {
   id: "usr_abc123...",
   isRegistered: true,
+  userStatus: "erpnext_customer", // Progressive status: 'unregistered' | 'registered' | 'erpnext_customer' | 'verified'
+  accountStatus: "active", // Account health: 'active' | 'pending_verification' | 'disabled' | 'suspended'
   username: "john_doe",
   email: "john@example.com",
   phone: "+966501234567",
@@ -1449,23 +1464,256 @@ async function signup(username, email, password) {
   erpnextCustomerId: "CUST-001", // ERPNext customer ID (if linked)
   approvedCustomer: true, // Whether customer is approved for orders
   isVerified: true,
+  idVerified: false, // ID verification status (for credit/trust)
   createdAt: "2024-01-15T10:30:00Z",
   lastLogin: "2024-01-20T15:45:00Z"
 }
 ```
 
-**Anonymous User:**
+**Unregistered User:**
 ```javascript
 {
   id: "usr_xyz789...",
   isRegistered: false,
+  userStatus: "unregistered", // Progressive status
+  accountStatus: "active", // Account is active, just not registered yet
   deviceId: "device-456",
   deviceModel: "Samsung Galaxy S23",
   osModel: "Android 13",
-  geolocation: null, // or geolocation object if consent given
-  locationConsent: false,
+  firstName: "John", // Can be set progressively
+  province: "Damascus", // Can be set progressively via location permission
+  city: "Damascus",
+  geolocation: {
+    lat: 33.5138,
+    lng: 36.2765,
+    province: "Damascus",
+    city: "Damascus"
+  }, // Can be set via location permission popup
+  locationConsent: true,
   customerType: "retail",
   createdAt: "2024-01-15T10:30:00Z"
+  // No email, username, or password - these are set during signup
+}
+```
+
+### Progressive Data Collection
+
+The backend supports progressive user data collection, allowing users to update profile fields gradually without requiring email/password until registration.
+
+#### User Status Progression
+
+Users progress through four status levels:
+
+1. **`unregistered`**: User has ID but hasn't completed registration (no email/password)
+   - Can update: location, device info, personal details (firstName, surname, age, etc.)
+   - Cannot update: email, username, password (must use signup endpoint)
+
+2. **`registered`**: User completed registration (has email/username + password)
+   - Can update: all profile fields
+   - Sensitive changes (email, username) require password confirmation
+
+3. **`erpnext_customer`**: User has ERPNext customer account (`erpnextCustomerId` is set)
+   - Can place orders and access payment history (if `approvedCustomer: true`)
+
+4. **`verified`**: User has verified ID (`idVerified: true`)
+   - Highest trust level, eligible for credit/advanced features
+
+#### Progressive Update Example
+
+**Unregistered User Profile Update:**
+
+```javascript
+async function updateUnregisteredUserProfile(updates) {
+  // Unregistered users can update profile fields without password confirmation
+  // Note: Authentication token is optional for unregistered users
+  const deviceId = await DeviceInfo.getUniqueId();
+  const accessToken = await getAccessToken(); // Optional - may be null for unregistered users
+
+  const headers = {
+    'Content-Type': 'application/json',
+    'X-Device-ID': deviceId,
+  };
+
+  // Include auth token if available (for registered users)
+  if (accessToken) {
+    headers['Authorization'] = `Bearer ${accessToken}`;
+  }
+
+  const response = await fetch(`${BASE_URL}/api/auth/profile`, {
+    method: 'PUT',
+    headers: headers,
+    body: JSON.stringify({
+      first_name: updates.firstName,
+      surname: updates.surname,
+      province: updates.province,
+      city: updates.city,
+      // No passwordConfirmed required for unregistered users
+      // Cannot update email/username (must use signup endpoint)
+    }),
+  });
+
+  const data = await response.json();
+  
+  if (data.success) {
+    // Check userStatus to see if it progressed
+    const userStatus = data.data.user.userStatus;
+    console.log(`User status: ${userStatus}`);
+    
+    return data.data.user;
+  }
+  
+  throw new Error(data.message || 'Failed to update profile');
+}
+```
+
+**Registered User Profile Update:**
+
+```javascript
+async function updateRegisteredUserProfile(updates, passwordConfirmed = false) {
+  const accessToken = await getAccessToken();
+  if (!accessToken) {
+    throw new Error('User must be logged in');
+  }
+
+  // For sensitive changes (email, username), password confirmation is required
+  const requiresPasswordConfirmation = updates.email || updates.username;
+  
+  if (requiresPasswordConfirmation && !passwordConfirmed) {
+    throw new Error('Password confirmation required for email/username changes');
+  }
+
+  const response = await fetch(`${BASE_URL}/api/auth/profile`, {
+    method: 'PUT',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${accessToken}`,
+      'X-Device-ID': await DeviceInfo.getUniqueId(),
+    },
+    body: JSON.stringify({
+      ...updates,
+      passwordConfirmed: requiresPasswordConfirmation ? passwordConfirmed : undefined,
+    }),
+  });
+
+  const data = await response.json();
+  
+  // If email changed, user needs to verify new email
+  if (data.data.needsEmailVerification) {
+    return { needsVerification: true, data: data.data };
+  }
+
+  return data.data.user;
+}
+```
+
+#### Status Transition Triggers
+
+Status automatically transitions when:
+
+- **`unregistered` → `registered`**: When user completes signup (provides email/username + password)
+- **`registered` → `erpnext_customer`**: When `erpnextCustomerId` is set (via profile update or admin)
+- **`erpnext_customer` → `verified`**: When `idVerified` becomes `true` (via admin verification)
+
+**Example: Checking User Status:**
+
+```javascript
+async function checkUserStatus() {
+  const accessToken = await getAccessToken();
+  if (!accessToken) {
+    return 'unregistered'; // No token means unregistered
+  }
+
+  const response = await fetch(`${BASE_URL}/api/auth/me`, {
+    method: 'GET',
+    headers: {
+      'Authorization': `Bearer ${accessToken}`,
+      'X-Device-ID': await DeviceInfo.getUniqueId(),
+    },
+  });
+
+  const data = await response.json();
+  if (data.success) {
+    return data.data.user.userStatus || 'unregistered';
+  }
+  
+  return 'unregistered';
+}
+
+// Usage: Show different UI based on user status
+async function renderUserProfile() {
+  const userStatus = await checkUserStatus();
+  
+  switch (userStatus) {
+    case 'unregistered':
+      // Show registration prompt, allow profile updates without email
+      return <UnregisteredProfileView />;
+      
+    case 'registered':
+      // Show full profile, allow all updates
+      return <RegisteredProfileView />;
+      
+    case 'erpnext_customer':
+      // Show profile + order history access
+      return <CustomerProfileView />;
+      
+    case 'verified':
+      // Show profile + credit/advanced features
+      return <VerifiedProfileView />;
+  }
+}
+```
+
+#### Collecting Location via Notification Popups
+
+You can collect user location progressively through notification permission requests:
+
+```javascript
+import Geolocation from '@react-native-community/geolocation';
+import { PermissionsAndroid, Platform, Alert } from 'react-native';
+
+async function requestLocationPermission() {
+  try {
+    // Request permission
+    if (Platform.OS === 'android') {
+      const granted = await PermissionsAndroid.request(
+        PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION
+      );
+      if (granted !== PermissionsAndroid.RESULTS.GRANTED) {
+        return null;
+      }
+    }
+
+    // Get current location
+    return new Promise((resolve, reject) => {
+      Geolocation.getCurrentPosition(
+        async (position) => {
+          const { latitude, longitude } = position.coords;
+          
+          // Update user geolocation (works for both registered and unregistered users)
+          try {
+            const result = await updateGeolocation(latitude, longitude, true);
+            resolve(result);
+          } catch (error) {
+            reject(error);
+          }
+        },
+        (error) => reject(error),
+        { enableHighAccuracy: true, timeout: 15000, maximumAge: 10000 }
+      );
+    });
+  } catch (error) {
+    console.error('Location permission error:', error);
+    return null;
+  }
+}
+
+// Call this when user grants location permission via notification popup
+async function onLocationPermissionGranted() {
+  const location = await requestLocationPermission();
+  if (location) {
+    // Location automatically updates user's province/city fields
+    console.log('Location updated successfully');
+  }
 }
 ```
 
@@ -1473,10 +1721,12 @@ async function signup(username, email, password) {
 
 1. **Initialize on App Launch**: Create anonymous user when app first opens
 2. **Store userId**: Save userId in AsyncStorage for future requests
-3. **Location Consent**: Always request explicit consent before collecting geolocation
-4. **Device Info**: Update device info on app start or when device changes
-5. **Privacy Compliance**: Respect user's location consent and allow revocation
-6. **Seamless Conversion**: Anonymous users are automatically converted to registered during signup
+3. **Progressive Updates**: Allow users to update profile fields gradually without requiring registration
+4. **Location Consent**: Always request explicit consent before collecting geolocation (via notification popups)
+5. **Device Info**: Update device info on app start or when device changes
+6. **Privacy Compliance**: Respect user's location consent and allow revocation
+7. **Seamless Conversion**: Anonymous users are automatically converted to registered during signup
+8. **Status Awareness**: Check `userStatus` to show appropriate UI and features based on user progression
 
 ---
 

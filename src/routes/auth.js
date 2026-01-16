@@ -187,7 +187,8 @@ router.post(
         googleId: googleId || null,
         isVerified: !needsVerification,
         verificationMethod: method,
-        status: !needsVerification ? 'active' : 'pending_verification',
+        accountStatus: !needsVerification ? 'active' : 'pending_verification',
+        // userStatus will be auto-transitioned to 'registered' by updateUser() logic
         // Preserve existing device info and geolocation
         deviceModel: device_model || existingAnonymousUser.deviceModel,
         osModel: os_model || existingAnonymousUser.osModel,
@@ -303,7 +304,7 @@ router.post(
     // Update user as verified
     const user = await updateUser(userId, {
       isVerified: true,
-      status: 'active',
+      accountStatus: 'active',
     });
 
     if (!user) {
@@ -681,6 +682,7 @@ router.get(
           idVerified: req.user.idVerified || false,
           phoneVerified: req.user.phoneVerified || false,
           accountStatus: req.user.accountStatus || 'active',
+          userStatus: req.user.userStatus || 'unregistered',
           trustScore: req.user.trustScore || 100,
           createdAt: req.user.createdAt,
           lastLogin: req.user.lastLogin,
@@ -693,7 +695,9 @@ router.get(
 
 /**
  * PUT /api/auth/profile
- * Update profile (requires authentication, passwordConfirmed flag)
+ * Update profile (requires authentication)
+ * Supports progressive updates: unregistered users can update profile fields without password confirmation
+ * Registered users require password confirmation for sensitive changes (email, username)
  */
 router.put(
   '/profile',
@@ -716,8 +720,31 @@ router.put(
       os_model,
       erpnext_customer_id,
       approved_customer,
+      passwordConfirmed,
+      userStatus,
+      first_name,
+      surname,
+      age,
+      occupation,
+      fitness_level,
+      gender,
+      fitness_goal,
     } = req.validatedBody;
     const userId = req.userId;
+    
+    // Get current user status
+    const currentUserStatus = req.user.userStatus || 'unregistered';
+    const isUnregistered = currentUserStatus === 'unregistered';
+
+    // For unregistered users: cannot update email/username (must use signup endpoint)
+    if (isUnregistered && (username || email)) {
+      throw new ValidationError('Email and username can only be set during registration. Please use the signup endpoint.');
+    }
+
+    // For registered users: password confirmation required for sensitive changes
+    if (!isUnregistered && (username || email) && !passwordConfirmed) {
+      throw new ValidationError('Password confirmation required for email/username changes');
+    }
 
     // Check if username is being changed and if it's available
     if (username && username !== req.user.username) {
@@ -755,6 +782,11 @@ router.put(
     if (approved_customer !== undefined) updates.approvedCustomer = approved_customer;
     if (device_model !== undefined) updates.deviceModel = device_model;
     if (os_model !== undefined) updates.osModel = os_model;
+    
+    // Handle explicit userStatus update (if provided, validate it's a progression)
+    if (userStatus !== undefined) {
+      updates.userStatus = userStatus;
+    }
     
     // Handle geolocation update separately (it has its own function)
     if (geolocation !== undefined || location_consent !== undefined) {
@@ -827,6 +859,7 @@ router.put(
           idVerified: updatedUser.idVerified || false,
           phoneVerified: updatedUser.phoneVerified || false,
           accountStatus: updatedUser.accountStatus || 'active',
+          userStatus: updatedUser.userStatus || 'unregistered',
           trustScore: updatedUser.trustScore || 100,
           isRegistered: updatedUser.isRegistered,
         },
