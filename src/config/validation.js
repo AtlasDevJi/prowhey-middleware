@@ -261,6 +261,8 @@ const geolocationSchema = z.object({
   lng: z.number().min(-180).max(180),
   province: z.string().max(100).optional(),
   city: z.string().max(100).optional(),
+  district: z.string().max(100).optional(),
+  town: z.string().max(100).optional(),
   street: z.string().max(200).optional(),
 }).optional().nullable();
 
@@ -300,6 +302,8 @@ const signupSchema = z.object({
   fitness_goal: z.enum(['weight_loss', 'muscle_gain', 'endurance', 'general_fitness', 'athletic_performance', 'rehabilitation']).optional(),
   province: z.string().max(100).optional(),
   city: z.string().max(100).optional(),
+  district: z.string().max(100).optional(),
+  town: z.string().max(100).optional(),
   whatsapp_number: z.string().regex(whatsappRegex, 'Invalid WhatsApp number format').optional(),
   telegram_username: z.string().regex(telegramUsernameRegex, 'Invalid Telegram username format (must start with @)').optional(),
   avatar: avatarSchema,
@@ -372,6 +376,8 @@ const updateProfileSchema = z.object({
   fitness_goal: z.enum(['weight_loss', 'muscle_gain', 'endurance', 'general_fitness', 'athletic_performance', 'rehabilitation']).optional(),
   province: z.string().max(100).optional(),
   city: z.string().max(100).optional(),
+  district: z.string().max(100).optional(),
+  town: z.string().max(100).optional(),
   whatsapp_number: z.string().regex(whatsappRegex, 'Invalid WhatsApp number format').optional(),
   telegram_username: z.string().regex(telegramUsernameRegex, 'Invalid Telegram username format (must start with @)').optional(),
   avatar: avatarSchema,
@@ -387,7 +393,7 @@ const updateProfileSchema = z.object({
 
 // Anonymous user creation schema
 const anonymousUserSchema = z.object({
-  device_id: z.string().min(1, 'Device ID required'),
+  device_id: z.string().min(1, 'Device ID required').optional(), // Optional - can use X-Device-ID header instead
   device_model: z.string().max(100).optional(),
   os_model: z.string().max(100).optional(),
   geolocation: geolocationSchema.optional(),

@@ -105,6 +105,8 @@ router.post(
       fitness_goal,
       province,
       city,
+      district,
+      town,
       whatsapp_number,
       telegram_username,
       avatar,
@@ -213,13 +215,15 @@ router.post(
         fitnessGoal: fitness_goal || existingAnonymousUser.fitnessGoal,
         province: province || existingAnonymousUser.province,
         city: city || existingAnonymousUser.city,
+        district: district || existingAnonymousUser.district,
+        town: town || existingAnonymousUser.town,
         whatsappNumber: whatsapp_number || existingAnonymousUser.whatsappNumber,
         telegramUsername: telegram_username || existingAnonymousUser.telegramUsername,
         avatar: avatar || existingAnonymousUser.avatar,
         customerType: customer_type || existingAnonymousUser.customerType || 'retail',
         erpnextCustomerId: erpnext_customer_id || existingAnonymousUser.erpnextCustomerId,
         approvedCustomer: approved_customer !== undefined ? approved_customer : (existingAnonymousUser.approvedCustomer || false),
-        region: geolocation?.province || geolocation?.city || province || city || existingAnonymousUser.region,
+        region: geolocation?.province || geolocation?.city || geolocation?.district || geolocation?.town || province || city || district || town || existingAnonymousUser.region,
       });
     } else {
       // Create new registered user
@@ -241,6 +245,8 @@ router.post(
         fitnessGoal: fitness_goal,
         province,
         city,
+        district,
+        town,
         whatsappNumber: whatsapp_number,
         telegramUsername: telegram_username,
         avatar,
@@ -681,6 +687,8 @@ router.get(
           fitnessGoal: req.user.fitnessGoal,
           province: req.user.province,
           city: req.user.city,
+          district: req.user.district,
+          town: req.user.town,
           whatsappNumber: req.user.whatsappNumber,
           telegramUsername: req.user.telegramUsername,
           avatar: req.user.avatar,
@@ -723,6 +731,8 @@ router.put(
       phone,
       province,
       city,
+      district,
+      town,
       whatsapp_number,
       telegram_username,
       avatar,
@@ -787,6 +797,8 @@ router.put(
     if (fitness_goal !== undefined) updates.fitnessGoal = fitness_goal;
     if (province !== undefined) updates.province = province;
     if (city !== undefined) updates.city = city;
+    if (district !== undefined) updates.district = district;
+    if (town !== undefined) updates.town = town;
     if (whatsapp_number !== undefined) updates.whatsappNumber = whatsapp_number;
     if (telegram_username !== undefined) updates.telegramUsername = telegram_username;
     if (avatar !== undefined) updates.avatar = avatar;
@@ -861,6 +873,8 @@ router.put(
           fitnessGoal: updatedUser.fitnessGoal,
           province: updatedUser.province,
           city: updatedUser.city,
+          district: updatedUser.district,
+          town: updatedUser.town,
           whatsappNumber: updatedUser.whatsappNumber,
           telegramUsername: updatedUser.telegramUsername,
           avatar: updatedUser.avatar,

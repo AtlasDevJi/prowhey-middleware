@@ -29,11 +29,22 @@ const allowedOrigins = process.env.ALLOWED_ORIGINS
   ? process.env.ALLOWED_ORIGINS.split(',')
   : ['*'];
 
+const isDevelopment = process.env.NODE_ENV === 'development';
+// Flag to allow localhost CORS - only set this to true for local development
+// NEVER set this to true on remote/production servers
+const allowLocalhostCORS = process.env.ALLOW_LOCALHOST_CORS === 'true' && isDevelopment;
+
 app.use(
   cors({
     origin: (origin, callback) => {
       // Allow requests with no origin (mobile apps, Postman, etc.)
       if (!origin) {
+        return callback(null, true);
+      }
+
+      // Only allow localhost origins if explicitly enabled for local development
+      // This prevents accidental CORS issues on remote servers
+      if (allowLocalhostCORS && (origin.startsWith('http://localhost:') || origin.startsWith('http://127.0.0.1:'))) {
         return callback(null, true);
       }
 
@@ -89,6 +100,17 @@ app.use(securityMonitor);
 const { getRateLimitConfig } = require('./config/rate-limit');
 const { createRateLimiter } = require('./middleware/rate-limit');
 
+// Helper function to validate Express router
+function validateRouter(router, modulePath) {
+  if (!router) {
+    throw new Error(`Router from ${modulePath} is undefined. Module may not have loaded correctly.`);
+  }
+  if (typeof router.use !== 'function') {
+    throw new Error(`Router from ${modulePath} is not a valid Express router (missing .use method). Got: ${typeof router}`);
+  }
+  return router;
+}
+
 // Create rate limiters for different endpoint types
 const healthRateLimiter = createRateLimiter(getRateLimitConfig('health'), 'health');
 const resourceRateLimiter = createRateLimiter(getRateLimitConfig('resource'), 'resource');
@@ -97,55 +119,58 @@ const managementRateLimiter = createRateLimiter(getRateLimitConfig('management')
 const webhookRateLimiter = createRateLimiter(getRateLimitConfig('webhooks'), 'webhooks');
 
 // Health check routes
-const healthRoutes = require('./routes/health');
-const messagingRoutes = require('./routes/messaging');
+const healthRoutes = validateRouter(require('./routes/health'), './routes/health');
+const messagingRoutes = validateRouter(require('./routes/messaging'), './routes/messaging');
 app.use('/health', healthRateLimiter, healthRoutes);
 
 // Cache middleware - apply before other routes
 const { cacheMiddleware } = require('./services/cache/middleware');
+if (!cacheMiddleware || typeof cacheMiddleware !== 'function') {
+  throw new Error('cacheMiddleware is not a function. Check ./services/cache/middleware.js exports.');
+}
 app.use('/api/resource', resourceRateLimiter, cacheMiddleware);
 
 // Analytics routes
-const analyticsRoutes = require('./routes/analytics');
+const analyticsRoutes = validateRouter(require('./routes/analytics'), './routes/analytics');
 app.use('/api/analytics', analyticsRateLimiter, analyticsRoutes);
 
 // Price routes
-const priceRoutes = require('./routes/price');
+const priceRoutes = validateRouter(require('./routes/price'), './routes/price');
 app.use('/api/price', managementRateLimiter, priceRoutes);
 
 // Stock routes
-const stockRoutes = require('./routes/stock');
+const stockRoutes = validateRouter(require('./routes/stock'), './routes/stock');
 app.use('/api/stock', managementRateLimiter, stockRoutes);
 
 // Home routes (hero images and App Home)
-const homeRoutes = require('./routes/home');
+const homeRoutes = validateRouter(require('./routes/home'), './routes/home');
 app.use('/api', resourceRateLimiter, homeRoutes);
 
 // Webhook routes
-const webhookRoutes = require('./routes/webhooks');
+const webhookRoutes = validateRouter(require('./routes/webhooks'), './routes/webhooks');
 app.use('/api/webhooks', webhookRateLimiter, webhookRoutes);
 
 // Security routes (certificate info, etc.)
-const securityRoutes = require('./routes/security');
+const securityRoutes = validateRouter(require('./routes/security'), './routes/security');
 app.use('/api/security', securityRoutes);
 
 // Auth routes (rate limiting handled within routes)
-const authRoutes = require('./routes/auth');
+const authRoutes = validateRouter(require('./routes/auth'), './routes/auth');
 app.use('/api/auth', authRoutes);
 
 // Users routes (for anonymous users and device info)
-const usersRoutes = require('./routes/users');
+const usersRoutes = validateRouter(require('./routes/users'), './routes/users');
 app.use('/api/users', resourceRateLimiter, usersRoutes);
 
 // Sync routes
-const syncRoutes = require('./routes/sync');
+const syncRoutes = validateRouter(require('./routes/sync'), './routes/sync');
 app.use('/api/sync', resourceRateLimiter, syncRoutes);
 
 // Messaging routes
 app.use('/api/messaging', resourceRateLimiter, messagingRoutes);
 
 // ERPNext routes (ping endpoint for local testing)
-const erpnextRoutes = require('./routes/erpnext');
+const erpnextRoutes = validateRouter(require('./routes/erpnext'), './routes/erpnext');
 app.use('/api/erpnext', resourceRateLimiter, erpnextRoutes);
 
 // 404 handler - throw NotFoundError
@@ -177,6 +202,9 @@ const server = app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
   console.log(`Environment: ${process.env.NODE_ENV}`);
   console.log(`Health check: http://localhost:${PORT}/health`);
+  if (allowLocalhostCORS) {
+    console.log('⚠️  Localhost CORS enabled (development only)');
+  }
 });
 
 // Unhandled error handlers
@@ -220,4 +248,3 @@ process.on('SIGINT', () => {
 });
 
 module.exports = app;
-

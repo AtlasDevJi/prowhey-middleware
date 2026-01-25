@@ -17,6 +17,7 @@ const { handleAsyncErrors } = require('../utils/error-utils');
 const { ValidationError, NotFoundError } = require('../utils/errors');
 const { extractDeviceId } = require('../middleware/device-id');
 const { verifyToken, JWT_SECRET, generateAccessToken, generateRefreshToken } = require('../middleware/auth');
+const { logger } = require('../services/logger');
 
 // Apply device ID extraction middleware
 router.use(extractDeviceId);
@@ -60,9 +61,16 @@ router.post(
   handleAsyncErrors(async (req, res) => {
     const { device_id, device_model, os_model, geolocation, location_consent } = req.validatedBody;
     
+    // Use device_id from body if provided, otherwise use req.deviceId from middleware
+    const finalDeviceId = device_id || req.deviceId;
+    
+    if (!finalDeviceId) {
+      throw new ValidationError('Device ID required (provide in body or X-Device-ID header)');
+    }
+    
     // Create or get existing anonymous user
     const user = await createAnonymousUser(
-      device_id,
+      finalDeviceId,
       device_model || null,
       os_model || null,
       geolocation || null,
@@ -139,34 +147,90 @@ router.post(
   '/geolocation',
   validateRequest(geolocationUpdateRequestSchema),
   handleAsyncErrors(async (req, res) => {
+    logger.info('[GEOLOCATION] Request received', {
+      path: req.path,
+      deviceId: req.deviceId,
+      hasAuthHeader: !!req.headers.authorization,
+      body: req.validatedBody,
+    });
+
     const { geolocation, location_consent } = req.validatedBody;
     const deviceId = req.deviceId || req.headers['x-device-id'];
     const userId = await getUserIdFromRequest(req);
+    
+    logger.info('[GEOLOCATION] Extracted identifiers', {
+      deviceId,
+      userId,
+      geolocation,
+      location_consent,
+    });
     
     let user;
     
     // If authenticated, use userId
     if (userId) {
+      logger.info('[GEOLOCATION] Using authenticated userId', { userId });
       user = await getUserById(userId);
       if (!user) {
+        logger.error('[GEOLOCATION] User not found by userId', { userId });
         throw new NotFoundError('User not found');
       }
+      logger.info('[GEOLOCATION] Found user by userId', {
+        userId: user.id,
+        hasGeolocation: !!user.geolocation,
+        locationConsent: user.locationConsent,
+      });
     } else if (deviceId) {
       // If not authenticated, use deviceId
+      logger.info('[GEOLOCATION] Using deviceId (anonymous user)', { deviceId });
       user = await getUserByDeviceId(deviceId);
+      
       if (!user) {
+        logger.info('[GEOLOCATION] User not found by deviceId, creating anonymous user', {
+          deviceId,
+          geolocation,
+          location_consent,
+        });
         // Create anonymous user if doesn't exist
         user = await createAnonymousUser(deviceId, null, null, geolocation, location_consent);
+        logger.info('[GEOLOCATION] Created anonymous user', {
+          userId: user.id,
+          geolocation: user.geolocation,
+          locationConsent: user.locationConsent,
+        });
       } else {
+        logger.info('[GEOLOCATION] Found existing user by deviceId', {
+          userId: user.id,
+          currentGeolocation: user.geolocation,
+          currentLocationConsent: user.locationConsent,
+        });
         // Update geolocation
+        logger.info('[GEOLOCATION] Updating geolocation', {
+          userId: user.id,
+          newGeolocation: geolocation,
+          newLocationConsent: location_consent,
+        });
         await updateGeolocation(user.id, geolocation, location_consent);
+        logger.info('[GEOLOCATION] Geolocation update completed', { userId: user.id });
       }
     } else {
+      logger.error('[GEOLOCATION] No deviceId or userId available', {
+        deviceId,
+        userId,
+        headers: Object.keys(req.headers),
+      });
       throw new ValidationError('Device ID required (X-Device-ID header) or authentication required');
     }
     
     // Get updated user
+    logger.info('[GEOLOCATION] Fetching updated user', { userId: user.id });
     const updatedUser = await getUserById(user.id);
+    
+    logger.info('[GEOLOCATION] Returning response', {
+      userId: updatedUser.id,
+      geolocation: updatedUser.geolocation,
+      locationConsent: updatedUser.locationConsent,
+    });
 
     return res.json({
       success: true,

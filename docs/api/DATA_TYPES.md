@@ -39,6 +39,8 @@ All API responses follow a standard format:
   fitnessGoal?: string,            // 'weight_loss' | 'muscle_gain' | 'endurance' | 'general_fitness' | 'athletic_performance' | 'rehabilitation'
   province?: string,               // Province name
   city?: string,                   // City name
+  district?: string,               // District name
+  town?: string,                   // Town name
   whatsappNumber?: string,         // WhatsApp number
   telegramUsername?: string,       // Telegram username (e.g., @username)
   avatar?: string,                 // Base64-encoded image data URL
@@ -71,6 +73,9 @@ All API responses follow a standard format:
   lng: number,        // Longitude
   province?: string,  // Province name (from reverse geocoding)
   city?: string,      // City name (from reverse geocoding)
+  district?: string,  // District name (from reverse geocoding)
+  town?: string,      // Town name (from reverse geocoding)
+  street?: string,    // Street address (optional)
 }
 ```
 

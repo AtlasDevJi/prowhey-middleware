@@ -1,0 +1,36 @@
+{
+  "watch": ["src"],
+  "ext": "js,json",
+  "ignore": [
+    "node_modules/**",
+    ".git/**",
+    "**/*.test.js",
+    "**/*.spec.js",
+    "tests/**",
+    "docs/**",
+    "scripts/**",
+    ".env*",
+    "**/*.log",
+    "**/*.tmp",
+    "**/*.swp",
+    "**/*.~*",
+    ".cursor/**",
+    ".vscode/**",
+    "**/.DS_Store",
+    "**/Thumbs.db"
+  ],
+  "delay": "3000",
+  "verbose": true,
+  "legacyWatch": true,
+  "signal": "SIGTERM",
+  "restartable": "rs",
+  "colours": true,
+  "env": {
+    "NODE_ENV": "development"
+  },
+  "watchOptions": {
+    "ignoreInitial": true,
+    "followSymlinks": false,
+    "usePolling": false
+  }
+}

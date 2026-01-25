@@ -1181,7 +1181,8 @@ async function initializeAnonymousUser() {
         geolocation = {
           lat: position.coords.latitude,
           lng: position.coords.longitude,
-          // Optionally reverse geocode to get province/city
+          // Optionally reverse geocode to get province, city, district, town
+          // province: 'Riyadh', city: 'Riyadh', district: 'Al Malaz', town: 'Al Malaz',
         };
         locationConsent = true;
       }
@@ -1248,46 +1249,48 @@ async function updateDeviceInfo() {
 
 ### Geolocation Update
 
-Update user geolocation with explicit consent:
+Update user geolocation with explicit consent. Location supports **province**, **city**, **district**, and **town** (from reverse geocoding).
 
 **Endpoint:** `POST /api/users/geolocation`
 
+**Location shape:** `{ lat, lng, province?, city?, district?, town?, street? }`. See [Frontend Profile Update Guide — Location Update](./FRONTEND_PROFILE_UPDATE_GUIDE.md#location-update--frontend-guide) for details.
+
 **Example:**
 ```javascript
-async function updateGeolocation(lat, lng, consent = true) {
+async function updateGeolocation(location, consent = true) {
   const deviceId = await DeviceInfo.getUniqueId();
   const accessToken = await getAccessToken(); // Optional - for registered users
-
-  // Reverse geocode to get province/city (can be done client-side or server-side)
-  const geolocation = {
-    lat: lat,
-    lng: lng,
-    province: 'Riyadh', // From reverse geocoding
-    city: 'Riyadh',     // From reverse geocoding
-  };
 
   const headers = {
     'Content-Type': 'application/json',
     'X-Device-ID': deviceId,
   };
 
-  // Include auth token if user is registered
   if (accessToken) {
     headers['Authorization'] = `Bearer ${accessToken}`;
   }
 
   const response = await fetch(`${BASE_URL}/api/users/geolocation`, {
     method: 'POST',
-    headers: headers,
+    headers,
     body: JSON.stringify({
-      geolocation: geolocation,
+      geolocation: location,
       location_consent: consent,
     }),
   });
 
-  return await response.json();
+  const data = await response.json();
+  if (!data.success) throw new Error(data.error || 'Failed to update geolocation');
+  return data.data;
 }
+
+// Usage: after reverse geocoding, pass full location object
+// const location = { lat, lng, province, city, district, town };
+// const result = await updateGeolocation(location, true);
+// result = { userId, geolocation, locationConsent } — persist to local storage and display on profile.
 ```
+
+**What is returned:** `POST /api/users/geolocation` returns `{ success, message, data: { userId, geolocation, locationConsent } }`. It does **not** return the full user. Persist `data.geolocation`, `data.locationConsent`, and derived `province`/`city`/`district`/`town` from `geolocation` to local storage, then display them on the profile page. For full response shapes and persistence/display guidance, see [What Is Returned When Location Is Saved](./FRONTEND_PROFILE_UPDATE_GUIDE.md#what-is-returned-when-location-is-saved) in the Frontend Profile Update Guide.
 
 ### User Profile Management
 
@@ -1364,6 +1367,8 @@ async function updateUserProfile(updates) {
       surname: updates.surname,
       province: updates.province,
       city: updates.city,
+      district: updates.district,
+      town: updates.town,
       whatsapp_number: updates.whatsappNumber,
       telegram_username: updates.telegramUsername,
       avatar: updates.avatar, // Base64-encoded image
@@ -1547,6 +1552,8 @@ async function updateUnregisteredUserProfile(updates) {
       surname: updates.surname,
       province: updates.province,
       city: updates.city,
+      district: updates.district,
+      town: updates.town,
       // No passwordConfirmed required for unregistered users
       // Cannot update email/username (must use signup endpoint)
     }),
@@ -1665,15 +1672,14 @@ async function renderUserProfile() {
 
 #### Collecting Location via Notification Popups
 
-You can collect user location progressively through notification permission requests:
+You can collect user location progressively through notification permission requests. Use reverse geocoding to populate **province**, **city**, **district**, and **town** before calling the API.
 
 ```javascript
 import Geolocation from '@react-native-community/geolocation';
-import { PermissionsAndroid, Platform, Alert } from 'react-native';
+import { PermissionsAndroid, Platform } from 'react-native';
 
 async function requestLocationPermission() {
   try {
-    // Request permission
     if (Platform.OS === 'android') {
       const granted = await PermissionsAndroid.request(
         PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION
@@ -1683,15 +1689,18 @@ async function requestLocationPermission() {
       }
     }
 
-    // Get current location
     return new Promise((resolve, reject) => {
       Geolocation.getCurrentPosition(
         async (position) => {
           const { latitude, longitude } = position.coords;
-          
-          // Update user geolocation (works for both registered and unregistered users)
+          const location = { lat: latitude, lng: longitude };
+
+          // Reverse geocode to get province, city, district, town (optional)
+          // const reversed = await reverseGeocode(latitude, longitude);
+          // if (reversed) Object.assign(location, reversed);
+
           try {
-            const result = await updateGeolocation(latitude, longitude, true);
+            const result = await updateGeolocation(location, true);
             resolve(result);
           } catch (error) {
             reject(error);
@@ -1709,9 +1718,9 @@ async function requestLocationPermission() {
 
 // Call this when user grants location permission via notification popup
 async function onLocationPermissionGranted() {
-  const location = await requestLocationPermission();
-  if (location) {
-    // Location automatically updates user's province/city fields
+  const result = await requestLocationPermission();
+  if (result) {
+    // Location updates user's province, city, district, town (and geolocation)
     console.log('Location updated successfully');
   }
 }
@@ -1823,14 +1832,10 @@ function handleActionButton(button, navigation) {
       break;
 
     case 'enable_geolocation':
-      // Request geolocation permission
+      // Request location permission and update via POST /api/users/geolocation
       requestLocationPermission()
-        .then(() => {
-          // Update geolocation via API
-          return updateGeolocation(lat, lng, true);
-        })
-        .then(() => {
-          console.log('Geolocation enabled');
+        .then((result) => {
+          if (result) console.log('Geolocation enabled');
         })
         .catch((error) => {
           console.error('Failed to enable geolocation:', error);

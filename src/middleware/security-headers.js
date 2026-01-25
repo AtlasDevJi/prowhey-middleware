@@ -1,5 +1,14 @@
 const helmet = require('helmet');
 
+// Check if we should allow localhost CORS (development only)
+const isDevelopment = process.env.NODE_ENV === 'development';
+const allowLocalhostCORS = process.env.ALLOW_LOCALHOST_CORS === 'true' && isDevelopment;
+
+// Build CSP connectSrc based on environment
+const connectSrc = allowLocalhostCORS
+  ? ["'self'", 'http://localhost:*', 'http://127.0.0.1:*']
+  : ["'self'"];
+
 /**
  * Enhanced security headers configuration
  * Extends basic Helmet with additional security policies
@@ -12,7 +21,7 @@ const securityHeaders = helmet({
       scriptSrc: ["'self'"],
       styleSrc: ["'self'", "'unsafe-inline'"],
       imgSrc: ["'self'", "data:", "https:"],
-      connectSrc: ["'self'"],
+      connectSrc: connectSrc, // Allow localhost in development
       fontSrc: ["'self'"],
       objectSrc: ["'none'"],
       mediaSrc: ["'self'"],
@@ -20,8 +29,8 @@ const securityHeaders = helmet({
     },
   },
   
-  // Strict Transport Security (HSTS)
-  hsts: {
+  // Strict Transport Security (HSTS) - only in production
+  hsts: isDevelopment ? false : {
     maxAge: 31536000, // 1 year
     includeSubDomains: true,
     preload: true,
@@ -46,8 +55,8 @@ const securityHeaders = helmet({
   // Permissions Policy
   permittedCrossDomainPolicies: false,
   
-  // Expect-CT (Certificate Transparency)
-  expectCt: {
+  // Expect-CT (Certificate Transparency) - only in production
+  expectCt: isDevelopment ? false : {
     maxAge: 86400, // 24 hours
     enforce: true,
   },
@@ -86,4 +95,3 @@ function customSecurityHeaders(req, res, next) {
 }
 
 module.exports = { securityHeaders, customSecurityHeaders };
-

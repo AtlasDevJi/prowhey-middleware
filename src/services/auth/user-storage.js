@@ -111,6 +111,8 @@ async function createUser(userData) {
       fitnessGoal: userData.fitnessGoal || null, // e.g., 'weight_loss', 'muscle_gain', 'endurance', 'general_fitness'
       province: userData.province || null,
       city: userData.city || null,
+      district: userData.district || null,
+      town: userData.town || null,
       whatsappNumber: userData.whatsappNumber || null,
       telegramUsername: userData.telegramUsername || null,
       avatar: userData.avatar || null, // Base64-encoded image
@@ -154,7 +156,7 @@ async function createUser(userData) {
       
       // Notification Targeting
       groups: userData.groups || [],
-      region: userData.region || userData.geolocation?.province || userData.geolocation?.city || null,
+      region: userData.region || userData.geolocation?.province || userData.geolocation?.city || userData.geolocation?.district || userData.geolocation?.town || null,
       
       // ERPNext Integration
       erpnextCustomerId: userData.erpnextCustomerId || null,
@@ -187,14 +189,13 @@ async function createUser(userData) {
     
     // Update province/city indexes (optional, for efficient queries)
     if (user.province) {
-      await redis.sadd(`province:${user.province}:users`, userId);
+      await updateProvinceIndex(userId, null, user.province);
     }
     if (user.city) {
-      await redis.sadd(`city:${user.city}:users`, userId);
+      await updateCityIndex(userId, null, user.city);
     }
-    if (!isRegistered) {
-      await redis.sadd('non_registered:users', userId);
-    }
+    const initialStatus = user.userStatus || computeUserStatus(user);
+    await updateUserStatusIndex(userId, null, initialStatus);
 
     logger.info('User created', { 
       userId, 
@@ -324,6 +325,58 @@ async function getUserByGoogleId(googleId) {
 }
 
 /**
+ * Update province index set
+ * @param {string} userId - User ID
+ * @param {string|null} oldProvince - Old province value
+ * @param {string|null} newProvince - New province value
+ */
+async function updateProvinceIndex(userId, oldProvince, newProvince) {
+  const redis = getRedisClient();
+  if (oldProvince && oldProvince !== newProvince) {
+    await redis.srem(`province:${oldProvince}:users`, userId);
+  }
+  if (newProvince && newProvince !== oldProvince) {
+    await redis.sadd(`province:${newProvince}:users`, userId);
+  }
+}
+
+/**
+ * Update city index set
+ * @param {string} userId - User ID
+ * @param {string|null} oldCity - Old city value
+ * @param {string|null} newCity - New city value
+ */
+async function updateCityIndex(userId, oldCity, newCity) {
+  const redis = getRedisClient();
+  if (oldCity && oldCity !== newCity) {
+    await redis.srem(`city:${oldCity}:users`, userId);
+  }
+  if (newCity && newCity !== oldCity) {
+    await redis.sadd(`city:${newCity}:users`, userId);
+  }
+}
+
+/**
+ * Update non_registered:users set based on userStatus
+ * @param {string} userId - User ID
+ * @param {string} oldStatus - Old userStatus value
+ * @param {string} newStatus - New userStatus value
+ */
+async function updateUserStatusIndex(userId, oldStatus, newStatus) {
+  const redis = getRedisClient();
+  const wasUnregistered = oldStatus === 'unregistered';
+  const isUnregistered = newStatus === 'unregistered';
+  
+  if (wasUnregistered && !isUnregistered) {
+    // Transitioning away from unregistered
+    await redis.srem('non_registered:users', userId);
+  } else if (!wasUnregistered && isUnregistered) {
+    // Transitioning to unregistered (unlikely but handle it)
+    await redis.sadd('non_registered:users', userId);
+  }
+}
+
+/**
  * Update user
  * @param {string} userId - User ID
  * @param {object} updates - Fields to update
@@ -396,6 +449,13 @@ async function updateUser(userId, updates) {
       }
     }
 
+    // Update non_registered:users set based on userStatus changes
+    const oldStatus = user.userStatus || computeUserStatus(user);
+    const newStatus = updated.userStatus;
+    if (oldStatus !== newStatus) {
+      await updateUserStatusIndex(userId, oldStatus, newStatus);
+    }
+
     // Update indexes if email/username changed
     if (updates.email && updates.email !== user.email) {
       // Delete old email index
@@ -454,39 +514,19 @@ async function updateUser(userId, updates) {
       }
     }
     
-    // Update province/city indexes if changed
-    if (updates.province && updates.province !== user.province) {
-      if (user.province) {
-        await redis.srem(`province:${user.province}:users`, userId);
-      }
-      if (updates.province) {
-        await redis.sadd(`province:${updates.province}:users`, userId);
-      }
+    // Update province/city indexes: always remove from old when province/city is updated,
+    // then add to new only if non-null. This prevents users from lingering in old city/province
+    // sets (e.g. after clearing location or changing city) and appearing in multiple cities.
+    if (Object.prototype.hasOwnProperty.call(updates, 'province')) {
+      await updateProvinceIndex(userId, user.province, updates.province);
     }
-    
-    if (updates.city && updates.city !== user.city) {
-      if (user.city) {
-        await redis.srem(`city:${user.city}:users`, userId);
-      }
-      if (updates.city) {
-        await redis.sadd(`city:${updates.city}:users`, userId);
-      }
-    }
-    
-    // Update isRegistered status and non_registered index
-    if (updates.isRegistered !== undefined && updates.isRegistered !== user.isRegistered) {
-      if (!user.isRegistered && updates.isRegistered) {
-        // Converting from anonymous to registered
-        await redis.srem('non_registered:users', userId);
-      } else if (user.isRegistered && !updates.isRegistered) {
-        // Converting from registered to anonymous (unlikely, but handle it)
-        await redis.sadd('non_registered:users', userId);
-      }
+    if (Object.prototype.hasOwnProperty.call(updates, 'city')) {
+      await updateCityIndex(userId, user.city, updates.city);
     }
     
     // Update region from geolocation if provided
-    if (updates.geolocation && updates.geolocation.province) {
-      updated.region = updates.geolocation.province || updates.geolocation.city || updated.region;
+    if (updates.geolocation && (updates.geolocation.province || updates.geolocation.city || updates.geolocation.district || updates.geolocation.town)) {
+      updated.region = updates.geolocation.province || updates.geolocation.city || updates.geolocation.district || updates.geolocation.town || updated.region;
     }
 
     await redis.set(`user:${userId}`, JSON.stringify(updated));
@@ -584,6 +624,19 @@ async function softDeleteUser(userId) {
       await redis.del(`google:${user.googleId}`);
     }
     
+    // Remove from all set indexes (province, city, non_registered)
+    // Disabled users should not appear in active user sets
+    if (user.province) {
+      await redis.srem(`province:${user.province}:users`, userId);
+    }
+    if (user.city) {
+      await redis.srem(`city:${user.city}:users`, userId);
+    }
+    const userStatus = user.userStatus || computeUserStatus(user);
+    if (userStatus === 'unregistered') {
+      await redis.srem('non_registered:users', userId);
+    }
+    
     // Keep device and phone indexes for duplicate detection
     // These will be checked during signup to prevent re-registration
 
@@ -635,7 +688,9 @@ async function hardDeleteUser(userId) {
     if (user.city) {
       await redis.srem(`city:${user.city}:users`, userId);
     }
-    if (!user.isRegistered) {
+    // Remove from non_registered set based on userStatus (not isRegistered)
+    const userStatus = user.userStatus || computeUserStatus(user);
+    if (userStatus === 'unregistered') {
       await redis.srem('non_registered:users', userId);
     }
 
@@ -894,12 +949,18 @@ async function updateGeolocation(userId, geolocation, consent) {
     
     // Update region from geolocation if provided
     if (consent && geolocation) {
-      updates.region = geolocation.province || geolocation.city || null;
+      updates.region = geolocation.province || geolocation.city || geolocation.district || geolocation.town || null;
       updates.province = geolocation.province || null;
       updates.city = geolocation.city || null;
+      updates.district = geolocation.district || null;
+      updates.town = geolocation.town || null;
     } else if (!consent) {
       // Remove geolocation data if consent revoked
       updates.geolocation = null;
+      updates.province = null;
+      updates.city = null;
+      updates.district = null;
+      updates.town = null;
       updates.locationConsentTimestamp = null;
     }
     
