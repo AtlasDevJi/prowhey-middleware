@@ -51,10 +51,12 @@ function validateRequest(schema) {
         logger.warn('Request validation failed', {
           path: req.path,
           method: req.method,
-          errors,
+          errors: errors.map(e => `${e.field}: ${e.message}`).join(', '),
+          errorDetails: errors, // Include full details for debugging
         });
 
         // Throw ValidationError - let error handler middleware format response
+        // This is an operational error and will be caught by error handler
         throw new ValidationError('Request validation failed', {
           fields: errors,
         });

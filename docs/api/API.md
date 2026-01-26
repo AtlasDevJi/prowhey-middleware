@@ -83,6 +83,8 @@ All authentication endpoints are prefixed with `/api/auth`. Most endpoints requi
 
 Register a new user account.
 
+**Important:** This endpoint no longer requires verification. All registered users are automatically verified and receive tokens immediately.
+
 | Header | Type | Required | Description |
 |--------|------|----------|-------------|
 | `X-Device-ID` | string | Yes | Unique device identifier |
@@ -94,11 +96,31 @@ Register a new user account.
 | `email` | string | No* | Email address (required if phone not provided) |
 | `password` | string | Yes | Password (minimum 6 characters) |
 | `phone` | string | No* | Phone number in E.164 format (e.g., +1234567890) |
-| `verificationMethod` | string | No | `sms` or `whatsapp` (defaults to `sms` if phone provided) |
 | `deviceId` | string | Yes | Device identifier |
 | `googleId` | string | No | Google OAuth ID (for Google signup) |
+| **Profile Fields (Required):** |
+| `first_name` | string | Yes | First name (max 50 characters) |
+| `surname` | string | Yes | Surname (max 50 characters) |
+| `province` | string | Yes | Province (max 100 characters) |
+| `gender` | string | Yes | One of: `male`, `female`, `other`, `prefer_not_to_say` |
+| **Location Fields (Either Required):** |
+| `city` | string | Yes* | City (max 100 characters) |
+| `town` | string | Yes* | Town (max 100 characters) |
+| **Profile Fields (Optional):** |
+| `district` | string | No | District (max 100 characters) |
+| `age` | number | No | Age (13-120) |
+| `occupation` | string | No | Occupation (max 100 characters) |
+| `fitness_level` | string | No | One of: `beginner`, `intermediate`, `advanced`, `professional` |
+| `fitness_goal` | string | No | One of: `weight_loss`, `muscle_gain`, `endurance`, `general_fitness`, `athletic_performance`, `rehabilitation` |
+| `whatsapp_number` | string | No | WhatsApp number in E.164 format |
+| `telegram_username` | string | No | Telegram username (must start with @) |
+| `geolocation` | object | No | Geolocation object (see Geolocation schema) |
+| `location_consent` | boolean | No | User consent for location tracking |
+| `device_model` | string | No | Device model (max 100 characters) |
+| `os_model` | string | No | OS model (max 100 characters) |
 
-\* Either `email` or `phone` must be provided.
+\* Either `email` or `phone` must be provided.  
+\*\* Either `city` or `town` must be provided (at least one is required).
 
 **Example Request:**
 
@@ -112,8 +134,36 @@ X-Device-ID: device-123
   "email": "john@example.com",
   "password": "securepass123",
   "phone": "+1234567890",
-  "verificationMethod": "sms",
-  "deviceId": "device-123"
+  "deviceId": "device-123",
+  "first_name": "John",
+  "surname": "Doe",
+  "province": "California",
+  "city": "Los Angeles",
+  "district": "Downtown",
+  "gender": "male",
+  "age": 30
+}
+```
+
+**Alternative Example (with town instead of city):**
+
+```http
+POST /api/auth/signup
+Content-Type: application/json
+X-Device-ID: device-123
+
+{
+  "username": "janedoe",
+  "email": "jane@example.com",
+  "password": "securepass123",
+  "phone": "+1234567890",
+  "deviceId": "device-456",
+  "first_name": "Jane",
+  "surname": "Doe",
+  "province": "California",
+  "town": "Smallville",
+  "gender": "female",
+  "age": 28
 }
 ```
 
@@ -127,14 +177,27 @@ X-Device-ID: device-123
       "id": "0001",
       "email": "john@example.com",
       "username": "johndoe",
-      "isVerified": false
+      "first_name": "John",
+      "surname": "Doe",
+      "province": "California",
+      "city": "Los Angeles",
+      "district": "Downtown",
+      "gender": "male",
+      "age": 30,
+      "isVerified": true,
+      "userStatus": "registered"
     },
-    "needsVerification": true
+    "accessToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+    "refreshToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
   }
 }
 ```
 
-**Note:** If `needsVerification` is `true`, user must verify account with OTP before login. Google OAuth users are auto-verified.
+**Note:** 
+- All registered users are automatically verified (`isVerified: true`)
+- Tokens are always returned in the response
+- No OTP verification is required at registration
+- Verification will be required later when user becomes a customer (erpnext_customer status)
 
 ---
 

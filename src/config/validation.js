@@ -288,22 +288,24 @@ const signupSchema = z.object({
     .regex(/^[a-zA-Z0-9_]+$/, 'Only letters, numbers, and underscores allowed'),
   email: z.string().email('Invalid email').optional(),
   password: z.string().min(6, 'Password must be at least 6 characters'),
-  phone: z.string().regex(phoneRegex, 'Invalid phone number format').optional(),
-  verificationMethod: z.enum(['sms', 'whatsapp']).optional(),
+  phone: z.string().regex(phoneRegex, 'Invalid phone number format'),
   deviceId: z.string().min(1, 'Device ID required'),
   googleId: z.string().optional(), // For Google OAuth signup
-  // New profile fields
-  first_name: z.string().max(50).optional(),
-  surname: z.string().max(50).optional(),
+  // Note: verificationMethod removed - no verification required at registration
+  // Required profile fields
+  first_name: z.string().min(1, 'First name is required').max(50, 'First name must be 50 characters or less'),
+  surname: z.string().min(1, 'Surname is required').max(50, 'Surname must be 50 characters or less'),
+  province: z.string().min(1, 'Province is required').max(100, 'Province must be 100 characters or less'),
+  gender: z.enum(['male', 'female', 'other', 'prefer_not_to_say'], { required_error: 'Gender is required', invalid_type_error: 'Gender must be one of: male, female, other, prefer_not_to_say' }),
+  // Location fields - either city or town is required
+  city: z.string().min(1, 'City must be at least 1 character if provided').max(100, 'City must be 100 characters or less').optional(),
+  town: z.string().min(1, 'Town must be at least 1 character if provided').max(100, 'Town must be 100 characters or less').optional(),
+  // Optional profile fields
+  district: z.string().max(100).optional(),
   age: z.number().int().min(13).max(120).optional(), // Age range validation
   occupation: z.string().max(100).optional(),
   fitness_level: z.enum(['beginner', 'intermediate', 'advanced', 'professional']).optional(),
-  gender: z.enum(['male', 'female', 'other', 'prefer_not_to_say']).optional(),
   fitness_goal: z.enum(['weight_loss', 'muscle_gain', 'endurance', 'general_fitness', 'athletic_performance', 'rehabilitation']).optional(),
-  province: z.string().max(100).optional(),
-  city: z.string().max(100).optional(),
-  district: z.string().max(100).optional(),
-  town: z.string().max(100).optional(),
   whatsapp_number: z.string().regex(whatsappRegex, 'Invalid WhatsApp number format').optional(),
   telegram_username: z.string().regex(telegramUsernameRegex, 'Invalid Telegram username format (must start with @)').optional(),
   avatar: avatarSchema,
@@ -314,7 +316,13 @@ const signupSchema = z.object({
   os_model: z.string().max(100).optional(),
   erpnext_customer_id: z.string().max(100).optional(), // ERPNext customer ID (set from Redis/admin)
   approved_customer: z.boolean().optional().default(false), // Whether customer is approved for orders
-});
+}).refine(
+  (data) => data.city || data.town,
+  {
+    message: 'Either city or town is required',
+    path: ['city'], // Error will appear on city field, but applies to both
+  }
+);
 
 // Login schema
 const loginSchema = z.object({
@@ -546,6 +554,39 @@ const verifyEmailRequestSchema = z.object({
   query: z.object({}).passthrough(),
 });
 
+// Restore account schema
+const restoreAccountSchema = z.object({
+  deviceId: z.string().min(1, 'Device ID required'),
+  password: z.string().min(1, 'Password required'),
+});
+
+const restoreAccountRequestSchema = z.object({
+  params: z.object({}).passthrough(),
+  body: restoreAccountSchema,
+  query: z.object({}).passthrough(),
+});
+
+// Delete account schema
+const deleteAccountSchema = z.object({
+  deviceId: z.string().min(1, 'Device ID required'),
+  password: z.string().min(1, 'Password required'),
+});
+
+const deleteAccountRequestSchema = z.object({
+  params: z.object({}).passthrough(),
+  body: deleteAccountSchema,
+  query: z.object({}).passthrough(),
+});
+
+// Check device status schema
+const checkDeviceRequestSchema = z.object({
+  params: z.object({}).passthrough(),
+  body: z.object({}).passthrough(),
+  query: z.object({
+    deviceId: z.string().min(1, 'Device ID is required'),
+  }),
+});
+
 module.exports = {
   // Common schemas
   userIdSchema,
@@ -608,6 +649,9 @@ module.exports = {
   updateProfileRequestSchema,
   changePasswordRequestSchema,
   verifyEmailRequestSchema,
+  restoreAccountRequestSchema,
+  deleteAccountRequestSchema,
+  checkDeviceRequestSchema,
   anonymousUserRequestSchema,
   deviceInfoRequestSchema,
   geolocationUpdateRequestSchema,

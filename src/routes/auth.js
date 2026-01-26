@@ -19,11 +19,13 @@ const {
   addFraudFlag,
   updateTrustScore,
   softDeleteUser,
+  hardDeleteUser,
   emailExists,
   usernameExists,
   normalizeUsername,
   normalizeEmail,
   generateUserId,
+  computeUserStatus,
 } = require('../services/auth/user-storage');
 const {
   sendVerificationCode,
@@ -54,6 +56,9 @@ const {
   updateProfileRequestSchema,
   changePasswordRequestSchema,
   verifyEmailRequestSchema,
+  restoreAccountRequestSchema,
+  deleteAccountRequestSchema,
+  checkDeviceRequestSchema,
   anonymousUserRequestSchema,
   deviceInfoRequestSchema,
   geolocationUpdateRequestSchema,
@@ -62,6 +67,7 @@ const { handleAsyncErrors } = require('../utils/error-utils');
 const {
   ValidationError,
   UnauthorizedError,
+  ForbiddenError,
   ConflictError,
   NotFoundError,
   InternalServerError,
@@ -93,7 +99,6 @@ router.post(
       email, 
       password, 
       phone, 
-      verificationMethod, 
       deviceId, 
       googleId,
       first_name,
@@ -146,17 +151,49 @@ router.post(
       throw new ConflictError('An account with this device or phone number was previously disabled. Please contact support.');
     }
 
-    // Check if deviceId has an existing anonymous user
+    // Check if deviceId is already associated with an account (device conflict detection)
     let existingAnonymousUser = null;
     if (deviceId) {
-      existingAnonymousUser = await getUserByDeviceId(deviceId);
-      if (existingAnonymousUser && existingAnonymousUser.isRegistered) {
-        // Device already has a registered user - this shouldn't happen, but handle gracefully
-        throw new ConflictError('Device already associated with a registered account');
-      }
-      // Check if anonymous user is disabled
-      if (existingAnonymousUser && existingAnonymousUser.accountStatus === 'disabled') {
-        throw new ConflictError('This device is associated with a disabled account. Please contact support.');
+      const existingUser = await getUserByDeviceId(deviceId);
+      
+      if (existingUser) {
+        // Check if user is disabled
+        if (existingUser.accountStatus === 'disabled') {
+          throw new ConflictError('This device is associated with a disabled account. Please contact support.');
+        }
+        
+        // Check if user is a registered customer - customers cannot be replaced
+        if (existingUser.isRegistered) {
+          const isCustomer = existingUser.userStatus === 'erpnext_customer' || existingUser.approved_customer;
+          
+          if (isCustomer) {
+            throw new ConflictError('This device is already associated with a customer account. Please use the existing account or contact support.', {
+              code: 'DEVICE_CONFLICT',
+              existingAccount: {
+                username: existingUser.username,
+                email: existingUser.email,
+                phone: existingUser.phone,
+                userId: existingUser.id,
+                userStatus: existingUser.userStatus,
+              },
+            });
+          }
+          
+          // For non-customer registered accounts, return device conflict info
+          throw new ConflictError('This device is already associated with an account.', {
+            code: 'DEVICE_CONFLICT',
+            existingAccount: {
+              username: existingUser.username,
+              email: existingUser.email,
+              phone: existingUser.phone,
+              userId: existingUser.id,
+              userStatus: existingUser.userStatus,
+            },
+          });
+        }
+        
+        // Store anonymous user for later conversion
+        existingAnonymousUser = existingUser;
       }
     }
     
@@ -179,9 +216,8 @@ router.post(
       passwordHash = await hashPassword(password);
     }
 
-    // Determine verification method
-    const method = verificationMethod || (phone ? 'sms' : null);
-    const needsVerification = !googleId && (phone || email);
+    // No verification required at registration - all registered users are verified
+    // Verification will be required later when user becomes a customer (erpnext_customer status)
 
     let user;
     
@@ -195,9 +231,8 @@ router.post(
         passwordHash,
         phone: phone || null,
         googleId: googleId || null,
-        isVerified: !needsVerification,
-        verificationMethod: method,
-        accountStatus: !needsVerification ? 'active' : 'pending_verification',
+        isVerified: true, // All registered users are verified (no verification at registration)
+        accountStatus: 'active', // All registered users are active
         // userStatus will be auto-transitioned to 'registered' by updateUser() logic
         // Preserve existing device info and geolocation
         deviceModel: device_model || existingAnonymousUser.deviceModel,
@@ -233,8 +268,7 @@ router.post(
         passwordHash,
         phone: phone || null,
         googleId: googleId || null,
-        isVerified: !needsVerification,
-        verificationMethod: method,
+        isVerified: true, // All registered users are verified (no verification at registration)
         deviceId,
         firstName: first_name,
         surname,
@@ -260,29 +294,21 @@ router.post(
       });
     }
 
-    // Send verification code if needed
-    if (needsVerification && phone && method) {
-      const result = await sendVerificationCode(user.id, phone, method);
-      if (!result.success) {
-        logger.warn('Verification code send failed', { userId: user.id });
-      }
-    }
+    // DO NOT send verification codes during registration
+    // Verification will happen later when user becomes a customer (erpnext_customer status)
 
-    // Generate tokens if verified (Google OAuth)
-    let tokens = null;
-    if (user.isVerified) {
-      const payload = {
-        userId: user.id,
-        email: user.email,
-        username: user.username,
-      };
-      tokens = {
-        accessToken: generateAccessToken(payload),
-        refreshToken: generateRefreshToken(payload),
-      };
-    }
+    // Always generate tokens for registered users (no verification required)
+    const payload = {
+      userId: user.id,
+      email: user.email,
+      username: user.username,
+    };
+    const tokens = {
+      accessToken: generateAccessToken(payload),
+      refreshToken: generateRefreshToken(payload),
+    };
 
-    // Get updated user to ensure we have the latest userStatus
+    // Get updated user to ensure we have the latest userStatus and all profile fields
     const updatedUser = await getUserById(user.id);
 
     return res.status(201).json({
@@ -292,12 +318,39 @@ router.post(
           id: updatedUser.id,
           email: updatedUser.email,
           username: updatedUser.username,
+          phone: updatedUser.phone,
+          firstName: updatedUser.firstName,
+          surname: updatedUser.surname,
+          age: updatedUser.age,
+          occupation: updatedUser.occupation,
+          fitnessLevel: updatedUser.fitnessLevel,
+          gender: updatedUser.gender,
+          fitnessGoal: updatedUser.fitnessGoal,
+          province: updatedUser.province,
+          city: updatedUser.city,
+          district: updatedUser.district,
+          town: updatedUser.town,
+          whatsappNumber: updatedUser.whatsappNumber,
+          telegramUsername: updatedUser.telegramUsername,
+          avatar: updatedUser.avatar,
+          deviceModel: updatedUser.deviceModel,
+          osModel: updatedUser.osModel,
+          geolocation: updatedUser.geolocation,
+          locationConsent: updatedUser.locationConsent,
+          customerType: updatedUser.customerType,
+          erpnextCustomerId: updatedUser.erpnextCustomerId,
+          approvedCustomer: updatedUser.approvedCustomer || false,
           isVerified: updatedUser.isVerified,
-          isRegistered: updatedUser.isRegistered,
+          idVerified: updatedUser.idVerified || false,
+          phoneVerified: updatedUser.phoneVerified || false,
+          accountStatus: updatedUser.accountStatus || 'active',
           userStatus: updatedUser.userStatus || 'registered',
+          trustScore: updatedUser.trustScore || 100,
+          createdAt: updatedUser.createdAt,
+          isRegistered: updatedUser.isRegistered,
         },
-        ...(tokens || {}),
-        needsVerification: !updatedUser.isVerified,
+        accessToken: tokens.accessToken,
+        refreshToken: tokens.refreshToken,
       },
     });
   })
@@ -1076,6 +1129,213 @@ router.get(
     return res.json({
       success: true,
       data: { available: !exists },
+    });
+  })
+);
+
+/**
+ * POST /api/auth/restore-account
+ * Restore access to existing account by verifying password
+ */
+router.post(
+  '/restore-account',
+  authRateLimiter,
+  validateRequest(restoreAccountRequestSchema),
+  handleAsyncErrors(async (req, res) => {
+    const { deviceId, password } = req.validatedBody;
+
+    // Find user by deviceId
+    const user = await getUserByDeviceId(deviceId);
+    
+    if (!user) {
+      throw new NotFoundError('No account found for this device');
+    }
+
+    // Check if user is disabled
+    if (user.accountStatus === 'disabled') {
+      throw new UnauthorizedError('This account has been disabled. Please contact support.');
+    }
+
+    // Check if user has a password (Google OAuth users don't have passwords)
+    if (!user.passwordHash) {
+      throw new UnauthorizedError('This account does not have a password. Please use Google login.');
+    }
+
+    // Verify password
+    const isValidPassword = await verifyPassword(password, user.passwordHash);
+    
+    if (!isValidPassword) {
+      SecurityLogger.logAuthAttempt(
+        user.id,
+        user.email,
+        false,
+        'Failed restore account - invalid password'
+      );
+      throw new UnauthorizedError('The password you entered is incorrect');
+    }
+
+    // Update last login
+    await updateUser(user.id, { lastLogin: new Date().toISOString() });
+
+    // Generate tokens
+    const payload = {
+      userId: user.id,
+      email: user.email,
+      username: user.username,
+    };
+
+    SecurityLogger.logAuthAttempt(
+      user.id,
+      user.email,
+      true,
+      'Account restored successfully'
+    );
+
+    return res.json({
+      success: true,
+      data: {
+        accessToken: generateAccessToken(payload),
+        refreshToken: generateRefreshToken(payload),
+        user: {
+          id: user.id,
+          email: user.email,
+          username: user.username,
+          first_name: user.first_name,
+          surname: user.surname,
+          province: user.province,
+          city: user.city,
+          district: user.district,
+          town: user.town,
+          gender: user.gender,
+          age: user.age,
+          isVerified: user.isVerified,
+          userStatus: user.userStatus,
+        },
+      },
+    });
+  })
+);
+
+/**
+ * POST /api/auth/delete-account
+ * Delete existing account associated with device (requires password verification)
+ */
+router.post(
+  '/delete-account',
+  authRateLimiter,
+  validateRequest(deleteAccountRequestSchema),
+  handleAsyncErrors(async (req, res) => {
+    const { deviceId, password } = req.validatedBody;
+
+    // Find user by deviceId
+    const user = await getUserByDeviceId(deviceId);
+    
+    if (!user) {
+      throw new NotFoundError('No account found for this device');
+    }
+
+    // Prevent deletion of customer accounts
+    if (user.userStatus === 'erpnext_customer' || user.approved_customer) {
+      SecurityLogger.logAuthAttempt(
+        user.id,
+        user.email,
+        false,
+        'Attempted to delete customer account'
+      );
+      throw new ForbiddenError('Customer accounts cannot be deleted. Please contact support.');
+    }
+
+    // Check if user has a password (Google OAuth users need different handling)
+    if (!user.passwordHash) {
+      throw new UnauthorizedError('This account does not have a password. Please contact support to delete this account.');
+    }
+
+    // Verify password
+    const isValidPassword = await verifyPassword(password, user.passwordHash);
+    
+    if (!isValidPassword) {
+      SecurityLogger.logAuthAttempt(
+        user.id,
+        user.email,
+        false,
+        'Failed delete account - invalid password'
+      );
+      throw new UnauthorizedError('The password you entered is incorrect');
+    }
+
+    // Hard delete user account (permanently remove)
+    const success = await hardDeleteUser(user.id);
+    
+    if (!success) {
+      throw new InternalServerError('Failed to delete account');
+    }
+
+    SecurityLogger.logAuthAttempt(
+      user.id,
+      user.email,
+      true,
+      'Account deleted successfully'
+    );
+
+    return res.json({
+      success: true,
+      data: {
+        message: 'Account deleted successfully',
+      },
+    });
+  })
+);
+
+/**
+ * GET /api/auth/check-device
+ * Check if a device is already associated with an account
+ * Used before signup to detect existing accounts
+ */
+router.get(
+  '/check-device',
+  authRateLimiter,
+  validateRequest(checkDeviceRequestSchema),
+  handleAsyncErrors(async (req, res) => {
+    const { deviceId } = req.validatedQuery;
+
+    // Find user by deviceId
+    const user = await getUserByDeviceId(deviceId);
+    
+    if (!user) {
+      return res.json({
+        success: true,
+        data: {
+          hasAccount: false,
+        },
+      });
+    }
+
+    // Check if user is disabled - don't return account info for disabled accounts
+    if (user.accountStatus === 'disabled') {
+      return res.json({
+        success: true,
+        data: {
+          hasAccount: false,
+        },
+      });
+    }
+
+    // Compute userStatus if not present
+    const userStatus = user.userStatus || computeUserStatus(user);
+
+    // Return existing account info (without sensitive data)
+    return res.json({
+      success: true,
+      data: {
+        hasAccount: true,
+        existingAccount: {
+          username: user.username,
+          email: user.email,
+          phone: user.phone,
+          userId: user.id,
+          userStatus: userStatus,
+        },
+      },
     });
   })
 );

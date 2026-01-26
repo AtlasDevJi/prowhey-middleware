@@ -22,7 +22,18 @@ function errorHandler(err, req, res, _next) {
 
   // Log error with context
   const errorData = formatErrorForLogging(error, req);
-  logger.error('Request error', errorData);
+  
+  // For validation errors, include field details in log
+  if (error.code === 'VALIDATION_ERROR' && error.details && error.details.fields) {
+    const fieldErrors = error.details.fields.map(f => `${f.field}: ${f.message}`).join(', ');
+    logger.error('Request error', {
+      ...errorData,
+      validationErrors: fieldErrors,
+      fieldCount: error.details.fields.length,
+    });
+  } else {
+    logger.error('Request error', errorData);
+  }
 
   // Determine if we're in development mode
   const isDevelopment = process.env.NODE_ENV === 'development';
